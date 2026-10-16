@@ -2,6 +2,9 @@ import os
 from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from docx import Document
+from docx.shared import Inches
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 mcp = MCPServer("DocxEditor")
 
@@ -187,6 +190,172 @@ def clear_docx(file_path: str) -> str:
         return f"Berhasil mengosongkan seluruh isi file {path}."
     except Exception as e:
         return f"Error: Gagal mengosongkan file {file_path}: {e}"
+
+
+@mcp.tool()
+def add_column_docx(
+    file_path: str,
+    table_index: int,
+    values: list[str] | None = None,
+    width_inches: float | None = None,
+) -> str:
+    """Menambahkan satu kolom baru pada tabel docx dengan teks sel opsional dan lebar opsional"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        width_val = Inches(width_inches) if width_inches and width_inches > 0 else None
+        table.add_column(width=width_val)
+
+        if width_val:
+            table.columns[-1].width = width_val
+
+        if values:
+            for idx, val in enumerate(values[: len(table.rows)]):
+                cell = table.rows[idx].cells[-1]
+                cell.text = str(val)
+                if width_val:
+                    cell.width = width_val
+        elif width_val:
+            for row in table.rows:
+                row.cells[-1].width = width_val
+
+        doc.save(str(path))
+        new_col_idx = len(table.columns) - 1
+        return f"Berhasil menambahkan kolom baru pada indeks {new_col_idx} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan kolom di {file_path}: {e}"
+
+
+@mcp.tool()
+def resize_table_docx(
+    file_path: str,
+    table_index: int,
+    col_widths: list[float] | None = None,
+    col_index: int | None = None,
+    width_inches: float | None = None,
+) -> str:
+    """Mengatur lebar kolom tabel (dalam inci). Bisa mengatur seluruh kolom via col_widths atau satu kolom via col_index & width_inches"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if col_widths is not None:
+            for c_idx, w in enumerate(col_widths):
+                if c_idx < len(table.columns):
+                    w_val = Inches(w)
+                    table.columns[c_idx].width = w_val
+                    for row in table.rows:
+                        if c_idx < len(row.cells):
+                            row.cells[c_idx].width = w_val
+            doc.save(str(path))
+            return f"Berhasil mengatur lebar {min(len(col_widths), len(table.columns))} kolom pada tabel {table_index} di {path}."
+        elif col_index is not None and width_inches is not None:
+            if col_index < 0 or col_index >= len(table.columns):
+                return f"Error: Indeks kolom {col_index} tidak valid. Total kolom: {len(table.columns)}."
+            w_val = Inches(width_inches)
+            table.columns[col_index].width = w_val
+            for row in table.rows:
+                if col_index < len(row.cells):
+                    row.cells[col_index].width = w_val
+            doc.save(str(path))
+            return f"Berhasil mengubah lebar kolom {col_index} menjadi {width_inches} inci pada tabel {table_index} di {path}."
+        else:
+            return "Error: Berikan parameter 'col_widths' (list lebar inci tiap kolom) atau pasangan 'col_index' dan 'width_inches'."
+    except Exception as e:
+        return f"Error: Gagal mengubah ukuran tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_table_visibility_docx(
+    file_path: str,
+    table_index: int,
+    visible: bool = True,
+) -> str:
+    """Mengatur visibilitas border tabel (visible=False untuk transparan/tanpa garis, visible=True untuk border garis)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        tblPr = table._element.xpath("w:tblPr")
+        if not tblPr:
+            return f"Error: Elemen properti tabel {table_index} tidak ditemukan."
+
+        for existing in tblPr[0].xpath("w:tblBorders"):
+            tblPr[0].remove(existing)
+
+        val = "single" if visible else "none"
+        sz = "4" if visible else "0"
+        borders = parse_xml(
+            f'<w:tblBorders {nsdecls("w")}>'
+            f'<w:top w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f'<w:left w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f'<w:bottom w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f'<w:right w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f'<w:insideH w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f'<w:insideV w:val="{val}" w:sz="{sz}" w:space="0" w:color="auto"/>'
+            f"</w:tblBorders>"
+        )
+        tblPr[0].append(borders)
+
+        doc.save(str(path))
+        status_text = "tampak (bergaris)" if visible else "transparan (tanpa border)"
+        return f"Berhasil mengubah visibilitas tabel {table_index} menjadi {status_text} di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur visibilitas tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def delete_column_docx(
+    file_path: str,
+    table_index: int,
+    col_index: int,
+) -> str:
+    """Menghapus satu kolom tertentu dari tabel docx berdasarkan col_index (0-indexed)"""
+    # shortcut: assume regular unmerged grid; complex merged cells may shift column indices.
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if len(table.columns) <= 1:
+            return f"Error: Tabel hanya memiliki 1 kolom. Gunakan delete_table_docx jika ingin menghapus seluruh tabel."
+
+        if col_index < 0 or col_index >= len(table.columns):
+            return f"Error: Indeks kolom {col_index} tidak valid. Total kolom: {len(table.columns)}."
+
+        for row in table.rows:
+            if col_index < len(row.cells):
+                tc = row.cells[col_index]._element
+                tc.getparent().remove(tc)
+
+        tblGrid = table._element.xpath("w:tblGrid")
+        if tblGrid:
+            gridCols = tblGrid[0].xpath("w:gridCol")
+            if col_index < len(gridCols):
+                tblGrid[0].remove(gridCols[col_index])
+
+        doc.save(str(path))
+        return f"Berhasil menghapus kolom {col_index} dari tabel {table_index} di {path}."
+    except Exception as e:
+        return f"Error: Gagal menghapus kolom di {file_path}: {e}"
 
 
 if __name__ == "__main__":

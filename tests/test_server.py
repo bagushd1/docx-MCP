@@ -2,11 +2,15 @@ import tempfile
 import unittest
 from pathlib import Path
 from docx_mcp.server import (
+    add_column_docx,
     clear_docx,
     create_table_docx,
+    delete_column_docx,
     delete_table_docx,
     edit_table_docx,
     read_docx,
+    resize_table_docx,
+    set_table_visibility_docx,
 )
 
 
@@ -78,6 +82,44 @@ class TestTableTools(unittest.TestCase):
         res = clear_docx(self.file_path)
         self.assertIn("Berhasil mengosongkan seluruh isi file", res)
         self.assertEqual(read_docx(self.file_path), "")
+
+    def test_add_column(self):
+        create_table_docx(self.file_path, [["A", "B"], ["1", "2"]])
+        res = add_column_docx(self.file_path, table_index=0, values=["C", "3"], width_inches=1.5)
+        self.assertIn("Berhasil menambahkan kolom baru", res)
+        content = read_docx(self.file_path)
+        self.assertIn("A | B | C", content)
+        self.assertIn("1 | 2 | 3", content)
+
+    def test_resize_table(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res1 = resize_table_docx(self.file_path, table_index=0, col_widths=[1.5, 2.5])
+        self.assertIn("Berhasil mengatur lebar 2 kolom", res1)
+
+        res2 = resize_table_docx(self.file_path, table_index=0, col_index=0, width_inches=3.0)
+        self.assertIn("Berhasil mengubah lebar kolom 0 menjadi 3.0 inci", res2)
+
+    def test_set_table_visibility(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res_hide = set_table_visibility_docx(self.file_path, table_index=0, visible=False)
+        self.assertIn("transparan (tanpa border)", res_hide)
+
+        res_show = set_table_visibility_docx(self.file_path, table_index=0, visible=True)
+        self.assertIn("tampak (bergaris)", res_show)
+
+    def test_delete_column(self):
+        create_table_docx(self.file_path, [["A", "B", "C"], ["1", "2", "3"]])
+        res = delete_column_docx(self.file_path, table_index=0, col_index=1)
+        self.assertIn("Berhasil menghapus kolom 1", res)
+
+        content = read_docx(self.file_path)
+        self.assertIn("A | C", content)
+        self.assertIn("1 | 3", content)
+
+    def test_delete_column_last_remaining(self):
+        create_table_docx(self.file_path, [["A"]])
+        res = delete_column_docx(self.file_path, table_index=0, col_index=0)
+        self.assertIn("Error: Tabel hanya memiliki 1 kolom", res)
 
 
 if __name__ == "__main__":

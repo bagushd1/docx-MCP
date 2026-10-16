@@ -11,6 +11,10 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`edit_table_docx`**: Edits specific cell content by table index, row, and column.
 - **`delete_table_docx`**: Deletes a table by its table index.
 - **`clear_docx`**: Clears all content (paragraphs and tables) from a document.
+- **`add_column_docx`**: Appends a new column to a table with optional cell values and width.
+- **`resize_table_docx`**: Resizes column widths (in inches) across all columns or for a single column.
+- **`set_table_visibility_docx`**: Toggles table border visibility (visible grid or transparent/borderless).
+- **`delete_column_docx`**: Deletes a specific column from a table by column index.
 
 ## Requirements
 
