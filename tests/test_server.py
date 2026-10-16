@@ -8,6 +8,8 @@ from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 from docx.oxml.ns import qn
 from docx_mcp.server import (
     add_column_docx,
+    add_horizontal_rule_docx,
+    add_page_break_docx,
     add_picture_docx,
     add_row_docx,
     add_section_docx,
@@ -613,6 +615,83 @@ class TestTableTools(unittest.TestCase):
         cols = doc.sections[1]._sectPr.find(qn("w:cols"))
         self.assertIsNotNone(cols)
         self.assertEqual(cols.get(qn("w:num")), "3")
+
+    def test_add_page_break(self):
+        doc = Document()
+        doc.add_paragraph("Paragraf 1")
+        doc.add_paragraph("Paragraf 2")
+        doc.save(self.file_path)
+
+        # 1. Break di akhir
+        res1 = add_page_break_docx(self.file_path, break_type="page")
+        self.assertIn("Berhasil menyisipkan page break di akhir", res1)
+
+        # 2. Break sebelum paragraf 1
+        res2 = add_page_break_docx(self.file_path, break_type="column", paragraph_index=1)
+        self.assertIn("Berhasil menyisipkan column break sebelum paragraf 1", res2)
+
+        # 3. Break di dalam sel tabel
+        create_table_docx(self.file_path, [["A", "B"], ["C", "D"]])
+        res3 = add_page_break_docx(self.file_path, break_type="page", table_index=0, row=0, col=1)
+        self.assertIn("Berhasil menyisipkan page break di dalam tabel 0 sel [0, 1]", res3)
+
+        doc_check = Document(self.file_path)
+        # Verifikasi bahwa run memiliki break
+        breaks = doc_check.element.xpath(".//w:br")
+        self.assertGreaterEqual(len(breaks), 3)
+
+    def test_add_horizontal_rule(self):
+        doc = Document()
+        doc.add_paragraph("Kementerian Pendidikan dan Kebudayaan")
+        doc.add_paragraph("Universitas Indonesia")
+        doc.add_paragraph("Jl. Salemba Raya No. 4, Jakarta Pusat")
+        doc.save(self.file_path)
+
+        # 1. Terapkan garis kop surat (double, 2.25 pt) langsung pada paragraf alamat (paragraf ke-2)
+        res_kop = add_horizontal_rule_docx(
+            self.file_path,
+            style="double",
+            size_pt=2.25,
+            color="#000000",
+            space_after_pt=4.0,
+            paragraph_index=2,
+            apply_to_existing=True,
+        )
+        self.assertIn("Berhasil menambahkan garis pembatas", res_kop)
+
+        # 2. Sisipkan standalone rule pembatas bab
+        res_rule = add_horizontal_rule_docx(
+            self.file_path,
+            style="single",
+            size_pt=1.5,
+            color="blue",
+            space_before_pt=6.0,
+            space_after_pt=12.0,
+        )
+        self.assertIn("Berhasil menambahkan garis pembatas", res_rule)
+
+        doc_check = Document(self.file_path)
+        # Cek border pada paragraf kop surat
+        p_kop = doc_check.paragraphs[2]
+        pPr_kop = p_kop._p.find(qn("w:pPr"))
+        self.assertIsNotNone(pPr_kop)
+        pBdr_kop = pPr_kop.find(qn("w:pBdr"))
+        self.assertIsNotNone(pBdr_kop)
+        bottom_kop = pBdr_kop.find(qn("w:bottom"))
+        self.assertIsNotNone(bottom_kop)
+        self.assertEqual(bottom_kop.get(qn("w:val")), "double")
+        self.assertEqual(bottom_kop.get(qn("w:sz")), "18")  # 2.25 * 8 = 18
+
+        # Cek standalone rule di akhir dokumen
+        p_last = doc_check.paragraphs[-1]
+        pPr_last = p_last._p.find(qn("w:pPr"))
+        self.assertIsNotNone(pPr_last)
+        pBdr_last = pPr_last.find(qn("w:pBdr"))
+        self.assertIsNotNone(pBdr_last)
+        bottom_last = pBdr_last.find(qn("w:bottom"))
+        self.assertIsNotNone(bottom_last)
+        self.assertEqual(bottom_last.get(qn("w:val")), "single")
+        self.assertEqual(bottom_last.get(qn("w:color")), "0000FF")  # blue
 
 
 if __name__ == "__main__":

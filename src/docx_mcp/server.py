@@ -9,7 +9,7 @@ from docx.shared import Inches, Pt, RGBColor, Cm, Mm
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 
 mcp = MCPServer("DocxEditor")
@@ -2155,6 +2155,165 @@ def add_section_docx(
         return f"Berhasil menambahkan section baru (section {sec_idx}, tipe={start_type}) di {path}."
     except Exception as e:
         return f"Error: Gagal menambahkan section ke {file_path}: {e}"
+
+
+@mcp.tool()
+def add_page_break_docx(
+    file_path: str,
+    break_type: str = "page",
+    paragraph_index: int | None = None,
+    table_index: int | None = None,
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Menyisipkan page break (pindah halaman), column break, atau line break ke dokumen .docx pada akhir dokumen, sebelum paragraf tertentu, atau di dalam sel tabel."""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        type_map = {
+            "page": WD_BREAK.PAGE,
+            "column": WD_BREAK.COLUMN,
+            "line": WD_BREAK.LINE,
+            "text_wrapping": WD_BREAK.LINE,
+        }
+        b_type = type_map.get(break_type.lower().strip(), WD_BREAK.PAGE)
+        type_label = break_type.lower().strip()
+
+        if table_index is not None:
+            if table_index < 0 or table_index >= len(doc.tables):
+                return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+            table = doc.tables[table_index]
+            if row is None or col is None:
+                return "Error: row dan col harus ditentukan jika table_index diisi."
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            cell = table.rows[row].cells[col]
+            p = cell.add_paragraph()
+            p.add_run().add_break(b_type)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(path))
+            return f"Berhasil menyisipkan {type_label} break di dalam tabel {table_index} sel [{row}, {col}] pada {path}."
+
+        if paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            target_p = doc.paragraphs[paragraph_index]
+            new_p = target_p.insert_paragraph_before()
+            new_p.add_run().add_break(b_type)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(path))
+            return f"Berhasil menyisipkan {type_label} break sebelum paragraf {paragraph_index} pada {path}."
+
+        p = doc.add_paragraph()
+        p.add_run().add_break(b_type)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return f"Berhasil menyisipkan {type_label} break di akhir dokumen {path}."
+    except Exception as e:
+        return f"Error: Gagal menyisipkan break ke {file_path}: {e}"
+
+
+@mcp.tool()
+def add_horizontal_rule_docx(
+    file_path: str,
+    style: str = "single",
+    size_pt: float = 1.5,
+    color: str = "000000",
+    space_before_pt: float = 0.0,
+    space_after_pt: float = 6.0,
+    border_position: str = "bottom",
+    paragraph_index: int | None = None,
+    apply_to_existing: bool = False,
+) -> str:
+    """Menyisipkan garis horizontal (rule / pembatas bab) atau menambahkan garis pembatas kop surat/paragraf dengan gaya (single, double, triple, thick, wave, dotted, dashed), ketebalan (pt), posisi border, dan warna kustom."""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        style_map = {
+            "single": "single",
+            "double": "double",
+            "triple": "triple",
+            "thick": "thick",
+            "dotted": "dotted",
+            "dashed": "dashed",
+            "dash": "dashed",
+            "dot": "dotted",
+            "wave": "wave",
+            "double_wave": "doubleWave",
+            "doublewave": "doubleWave",
+            "none": "none",
+            "nil": "none",
+        }
+        val = style_map.get(style.lower().strip(), "single")
+        sz_val = str(max(1, int(round(size_pt * 8))))
+
+        clean_color = "000000"
+        if color:
+            try:
+                rgb = parse_rgb_color(color)
+                clean_color = f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}"
+            except Exception:
+                clean_color = "000000"
+
+        if apply_to_existing:
+            if paragraph_index is None:
+                return "Error: paragraph_index wajib diisi jika apply_to_existing bernilai True."
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            p = doc.paragraphs[paragraph_index]
+            location_desc = f"pada paragraf {paragraph_index}"
+        else:
+            if paragraph_index is not None:
+                if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                    return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+                p = doc.paragraphs[paragraph_index].insert_paragraph_before()
+                location_desc = f"sebelum paragraf {paragraph_index}"
+            else:
+                p = doc.add_paragraph()
+                location_desc = "di akhir dokumen"
+            p.paragraph_format.space_before = Pt(max(0.0, space_before_pt))
+            p.paragraph_format.space_after = Pt(max(0.0, space_after_pt))
+            p.paragraph_format.line_spacing = Pt(1)
+
+        pPr = p._p.get_or_add_pPr()
+        pBdr = pPr.find(qn("w:pBdr"))
+        if pBdr is None:
+            pBdr = OxmlElement("w:pBdr")
+            pPr.insert_element_before(pBdr, "w:shd", "w:tabs", "w:spacing", "w:ind", "w:jc", "w:rPr", "w:sectPr")
+
+        positions = []
+        pos_lower = border_position.lower().strip()
+        if pos_lower in ("top", "above"):
+            positions = ["top"]
+        elif pos_lower in ("top_bottom", "both"):
+            positions = ["top", "bottom"]
+        elif pos_lower in ("box", "all"):
+            positions = ["top", "left", "bottom", "right"]
+        else:
+            positions = ["bottom"]
+
+        space_attr = "1" if not apply_to_existing else str(max(1, int(round(space_after_pt))))
+
+        for pos in positions:
+            tag_name = qn(f"w:{pos}")
+            border_elm = pBdr.find(tag_name)
+            if border_elm is None:
+                border_elm = OxmlElement(f"w:{pos}")
+                pBdr.append(border_elm)
+            border_elm.set(qn("w:val"), val)
+            border_elm.set(qn("w:sz"), sz_val)
+            border_elm.set(qn("w:space"), space_attr)
+            border_elm.set(qn("w:color"), clean_color)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return f"Berhasil menambahkan garis pembatas ({style}, {size_pt}pt, #{clean_color}, posisi={border_position}) {location_desc} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan garis pembatas ke {file_path}: {e}"
 
 
 if __name__ == "__main__":
