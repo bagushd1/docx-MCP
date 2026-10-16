@@ -177,5 +177,17 @@ def delete_table_docx(file_path: str, table_index: int) -> str:
         return f"Error: Gagal menghapus tabel di {file_path}: {e}"
 
 
+@mcp.tool()
+def clear_docx(file_path: str) -> str:
+    """Menghapus seluruh isi teks dan tabel dari file .docx sehingga menjadi dokumen kosong"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document()
+        doc.save(str(path))
+        return f"Berhasil mengosongkan seluruh isi file {path}."
+    except Exception as e:
+        return f"Error: Gagal mengosongkan file {file_path}: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()

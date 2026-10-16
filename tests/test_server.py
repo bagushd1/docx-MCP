@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from docx_mcp.server import (
+    clear_docx,
     create_table_docx,
     delete_table_docx,
     edit_table_docx,
@@ -71,6 +72,12 @@ class TestTableTools(unittest.TestCase):
         create_table_docx(self.file_path, [["A"]])
         res = delete_table_docx(self.file_path, table_index=3)
         self.assertIn("Error: Indeks tabel 3 tidak ditemukan", res)
+
+    def test_clear_docx(self):
+        create_table_docx(self.file_path, [["A", "B"]], heading="Header")
+        res = clear_docx(self.file_path)
+        self.assertIn("Berhasil mengosongkan seluruh isi file", res)
+        self.assertEqual(read_docx(self.file_path), "")
 
 
 if __name__ == "__main__":
