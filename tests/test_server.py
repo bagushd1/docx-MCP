@@ -14,11 +14,15 @@ from docx_mcp.server import (
     read_docx,
     resize_table_docx,
     set_cell_alignment_docx,
+    set_cell_margins_docx,
     set_cell_shading_docx,
+    set_cell_text_direction_docx,
     set_table_alignment_docx,
+    set_table_borders_docx,
     set_table_pagination_docx,
     set_table_style_docx,
     set_table_visibility_docx,
+    split_table_docx,
 )
 
 
@@ -185,6 +189,42 @@ class TestTableTools(unittest.TestCase):
         create_table_docx(self.file_path, [["Header 1", "Header 2"], ["Data 1", "Data 2"]])
         res = set_table_pagination_docx(self.file_path, table_index=0, repeat_header_rows=1, cant_split=True)
         self.assertIn("Berhasil mengatur opsi pagination", res)
+
+    def test_insert_row_and_column_at_index(self):
+        create_table_docx(self.file_path, [["A", "C"], ["1", "3"]])
+        res_col = add_column_docx(self.file_path, table_index=0, values=["B", "2"], insert_index=1)
+        self.assertIn("Berhasil menambahkan kolom baru pada indeks 1", res_col)
+        content1 = read_docx(self.file_path)
+        self.assertIn("A | B | C", content1)
+
+        res_row = add_row_docx(self.file_path, table_index=0, values=["X", "Y", "Z"], insert_index=1)
+        self.assertIn("Berhasil menambahkan baris baru pada indeks 1", res_row)
+        content2 = read_docx(self.file_path)
+        self.assertIn("X | Y | Z", content2)
+
+    def test_set_cell_margins(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res_table = set_cell_margins_docx(self.file_path, table_index=0, top_pt=5.0, bottom_pt=5.0)
+        self.assertIn("Berhasil mengatur margin padding", res_table)
+
+        res_cell = set_cell_margins_docx(self.file_path, table_index=0, row=0, col=0, left_pt=10.0)
+        self.assertIn("pada sel [0, 0]", res_cell)
+
+    def test_set_table_borders(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res = set_table_borders_docx(self.file_path, table_index=0, color_hex="FF0000", size=8, top=False, bottom=True)
+        self.assertIn("Berhasil mengatur border kustom", res)
+
+    def test_set_cell_text_direction(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res = set_cell_text_direction_docx(self.file_path, table_index=0, direction="bt_lr", row=0, col=0)
+        self.assertIn("Berhasil mengubah arah teks menjadi 'bt_lr' pada sel [0, 0]", res)
+
+    def test_split_table(self):
+        create_table_docx(self.file_path, [["R0"], ["R1"], ["R2"], ["R3"]])
+        res = split_table_docx(self.file_path, table_index=0, split_row_index=2)
+        self.assertIn("Berhasil membagi tabel 0 pada baris 2", res)
+        self.assertIn("memiliki 2 tabel", res)
 
 
 if __name__ == "__main__":

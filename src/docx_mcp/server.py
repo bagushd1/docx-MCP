@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
 from mcp.server.mcpserver import MCPServer
+from copy import deepcopy
 from docx import Document
 from docx.shared import Inches
-from docx.oxml import parse_xml
+from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -200,8 +201,9 @@ def add_column_docx(
     table_index: int,
     values: list[str] | None = None,
     width_inches: float | None = None,
+    insert_index: int | None = None,
 ) -> str:
-    """Menambahkan satu kolom baru pada tabel docx dengan teks sel opsional dan lebar opsional"""
+    """Menambahkan atau menyisipkan kolom pada tabel docx dengan teks sel opsional, lebar opsional, dan indeks posisi opsional"""
     try:
         path = validate_docx_path(file_path, must_exist=True)
         doc = Document(str(path))
@@ -210,25 +212,41 @@ def add_column_docx(
             return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
 
         table = doc.tables[table_index]
-        width_val = Inches(width_inches) if width_inches and width_inches > 0 else None
+        width_val = Inches(width_inches) if width_inches and width_inches > 0 else Inches(1.0)
         table.add_column(width=width_val)
 
+        if insert_index is not None:
+            if insert_index < 0 or insert_index > len(table.columns) - 1:
+                return f"Error: insert_index {insert_index} tidak valid. Rentang yang diizinkan: 0 sampai {len(table.columns)-1}."
+            if insert_index < len(table.columns) - 1:
+                for row in table.rows:
+                    tcs = row._tr.xpath("w:tc")
+                    new_tc = tcs[-1]
+                    tcs[insert_index].addprevious(new_tc)
+                tblGrid = table._element.xpath("w:tblGrid")
+                if tblGrid:
+                    cols = tblGrid[0].xpath("w:gridCol")
+                    if len(cols) > 1:
+                        cols[insert_index].addprevious(cols[-1])
+            target_col_idx = insert_index
+        else:
+            target_col_idx = len(table.columns) - 1
+
         if width_val:
-            table.columns[-1].width = width_val
+            table.columns[target_col_idx].width = width_val
 
         if values:
             for idx, val in enumerate(values[: len(table.rows)]):
-                cell = table.rows[idx].cells[-1]
+                cell = table.rows[idx].cells[target_col_idx]
                 cell.text = str(val)
                 if width_val:
                     cell.width = width_val
         elif width_val:
             for row in table.rows:
-                row.cells[-1].width = width_val
+                row.cells[target_col_idx].width = width_val
 
         doc.save(str(path))
-        new_col_idx = len(table.columns) - 1
-        return f"Berhasil menambahkan kolom baru pada indeks {new_col_idx} di tabel {table_index} pada {path}."
+        return f"Berhasil menambahkan kolom baru pada indeks {target_col_idx} di tabel {table_index} pada {path}."
     except Exception as e:
         return f"Error: Gagal menambahkan kolom di {file_path}: {e}"
 
@@ -366,8 +384,9 @@ def add_row_docx(
     table_index: int,
     values: list[str] | None = None,
     height_inches: float | None = None,
+    insert_index: int | None = None,
 ) -> str:
-    """Menambahkan satu baris baru pada tabel docx dengan teks sel opsional dan tinggi opsional"""
+    """Menambahkan atau menyisipkan baris baru pada tabel docx dengan teks sel opsional, tinggi opsional, dan indeks posisi opsional"""
     try:
         path = validate_docx_path(file_path, must_exist=True)
         doc = Document(str(path))
@@ -381,13 +400,21 @@ def add_row_docx(
         if height_inches and height_inches > 0:
             row.height = Inches(height_inches)
 
+        if insert_index is not None:
+            if insert_index < 0 or insert_index > len(table.rows) - 1:
+                return f"Error: insert_index {insert_index} tidak valid. Rentang yang diizinkan: 0 sampai {len(table.rows)-1}."
+            if insert_index < len(table.rows) - 1:
+                table.rows[insert_index]._tr.addprevious(row._tr)
+            target_row_idx = insert_index
+        else:
+            target_row_idx = len(table.rows) - 1
+
         if values:
-            for idx, val in enumerate(values[: len(row.cells)]):
-                row.cells[idx].text = str(val)
+            for idx, val in enumerate(values[: len(table.rows[target_row_idx].cells)]):
+                table.rows[target_row_idx].cells[idx].text = str(val)
 
         doc.save(str(path))
-        new_row_idx = len(table.rows) - 1
-        return f"Berhasil menambahkan baris baru pada indeks {new_row_idx} di tabel {table_index} pada {path}."
+        return f"Berhasil menambahkan baris baru pada indeks {target_row_idx} di tabel {table_index} pada {path}."
     except Exception as e:
         return f"Error: Gagal menambahkan baris di {file_path}: {e}"
 
@@ -685,6 +712,245 @@ def set_table_pagination_docx(
         return f"Berhasil mengatur opsi pagination (repeat_header_rows={repeat_header_rows}, cant_split={cant_split}) pada tabel {table_index} di {path}."
     except Exception as e:
         return f"Error: Gagal mengatur pagination tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_cell_margins_docx(
+    file_path: str,
+    table_index: int,
+    top_pt: float = 6.0,
+    bottom_pt: float = 6.0,
+    left_pt: float = 8.0,
+    right_pt: float = 8.0,
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Mengatur padding/margin internal sel (dalam satuan pt). Berlaku untuk sel spesifik ([row, col]) atau seluruh tabel jika row/col tidak diisi"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        top_dxa = int(top_pt * 20)
+        bottom_dxa = int(bottom_pt * 20)
+        left_dxa = int(left_pt * 20)
+        right_dxa = int(right_pt * 20)
+
+        if row is not None and col is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            cell = table.rows[row].cells[col]
+            tcPr = cell._element.get_or_add_tcPr()
+            for m in tcPr.xpath("w:tcMar"):
+                tcPr.remove(m)
+            tcMar = parse_xml(
+                f'<w:tcMar {nsdecls("w")}>'
+                f'<w:top w:w="{top_dxa}" w:type="dxa"/>'
+                f'<w:bottom w:w="{bottom_dxa}" w:type="dxa"/>'
+                f'<w:left w:w="{left_dxa}" w:type="dxa"/>'
+                f'<w:right w:w="{right_dxa}" w:type="dxa"/>'
+                f'</w:tcMar>'
+            )
+            tcPr.append(tcMar)
+            target_desc = f"sel [{row}, {col}]"
+        else:
+            tblPr = table._element.xpath("w:tblPr")
+            if not tblPr:
+                return f"Error: Elemen properti tabel {table_index} tidak ditemukan."
+            for m in tblPr[0].xpath("w:tblCellMar"):
+                tblPr[0].remove(m)
+            tblCellMar = parse_xml(
+                f'<w:tblCellMar {nsdecls("w")}>'
+                f'<w:top w:w="{top_dxa}" w:type="dxa"/>'
+                f'<w:bottom w:w="{bottom_dxa}" w:type="dxa"/>'
+                f'<w:left w:w="{left_dxa}" w:type="dxa"/>'
+                f'<w:right w:w="{right_dxa}" w:type="dxa"/>'
+                f'</w:tblCellMar>'
+            )
+            tblPr[0].append(tblCellMar)
+            target_desc = "seluruh tabel"
+
+        doc.save(str(path))
+        return f"Berhasil mengatur margin padding ({top_pt}pt, {bottom_pt}pt, {left_pt}pt, {right_pt}pt) pada {target_desc} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur margin sel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_table_borders_docx(
+    file_path: str,
+    table_index: int,
+    color_hex: str = "auto",
+    size: int = 4,
+    val: str = "single",
+    top: bool = True,
+    bottom: bool = True,
+    left: bool = True,
+    right: bool = True,
+    inside_h: bool = True,
+    inside_v: bool = True,
+) -> str:
+    """Mengatur border tabel secara kustom per sisi dengan opsi warna (HEX atau 'auto'), ketebalan (size), dan style border"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        tblPr = table._element.xpath("w:tblPr")
+        if not tblPr:
+            return f"Error: Elemen properti tabel {table_index} tidak ditemukan."
+
+        for b in tblPr[0].xpath("w:tblBorders"):
+            tblPr[0].remove(b)
+
+        clean_color = color_hex.lstrip("#").upper() if color_hex.lower() != "auto" else "auto"
+        val_top = val if top else "none"
+        val_bottom = val if bottom else "none"
+        val_left = val if left else "none"
+        val_right = val if right else "none"
+        val_inside_h = val if inside_h else "none"
+        val_inside_v = val if inside_v else "none"
+
+        borders = parse_xml(
+            f'<w:tblBorders {nsdecls("w")}>'
+            f'<w:top w:val="{val_top}" w:sz="{size if top else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'<w:bottom w:val="{val_bottom}" w:sz="{size if bottom else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'<w:left w:val="{val_left}" w:sz="{size if left else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'<w:right w:val="{val_right}" w:sz="{size if right else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'<w:insideH w:val="{val_inside_h}" w:sz="{size if inside_h else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'<w:insideV w:val="{val_inside_v}" w:sz="{size if inside_v else 0}" w:space="0" w:color="{clean_color}"/>'
+            f'</w:tblBorders>'
+        )
+        tblPr[0].append(borders)
+
+        doc.save(str(path))
+        return f"Berhasil mengatur border kustom (warna={clean_color}, size={size}) pada tabel {table_index} di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur border tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_cell_text_direction_docx(
+    file_path: str,
+    table_index: int,
+    direction: str = "bt_lr",
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Mengatur arah orientasi teks sel ('horizontal', 'bt_lr' untuk rotasi 90 derajat ke atas, atau 'tb_rl' untuk rotasi 270 derajat ke bawah)"""
+    try:
+        dir_map = {
+            "horizontal": "lrTb",
+            "lr_tb": "lrTb",
+            "bt_lr": "btLr",
+            "vertical_up": "btLr",
+            "tb_rl": "tbRl",
+            "vertical_down": "tbRl",
+        }
+        clean_dir = direction.strip().lower()
+        if clean_dir not in dir_map:
+            return f"Error: Arah teks '{direction}' tidak valid. Pilihan: 'horizontal', 'bt_lr' (ke atas), 'tb_rl' (ke bawah)."
+
+        xml_val = dir_map[clean_dir]
+
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        def apply_dir(cell):
+            tcPr = cell._element.get_or_add_tcPr()
+            for td in tcPr.xpath("w:textDirection"):
+                tcPr.remove(td)
+            if xml_val != "lrTb":
+                tcPr.append(parse_xml(f'<w:textDirection {nsdecls("w")} w:val="{xml_val}"/>'))
+
+        if row is not None and col is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            apply_dir(table.rows[row].cells[col])
+            target_desc = f"sel [{row}, {col}]"
+        elif row is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            for cell in table.rows[row].cells:
+                apply_dir(cell)
+            target_desc = f"seluruh baris {row}"
+        elif col is not None:
+            if col < 0 or col >= len(table.columns):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom: {len(table.columns)}."
+            for r in table.rows:
+                if col < len(r.cells):
+                    apply_dir(r.cells[col])
+            target_desc = f"seluruh kolom {col}"
+        else:
+            for r in table.rows:
+                for cell in r.cells:
+                    apply_dir(cell)
+            target_desc = "seluruh tabel"
+
+        doc.save(str(path))
+        return f"Berhasil mengubah arah teks menjadi '{clean_dir}' pada {target_desc} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal mengubah arah teks sel di {file_path}: {e}"
+
+
+@mcp.tool()
+def split_table_docx(
+    file_path: str,
+    table_index: int,
+    split_row_index: int,
+) -> str:
+    """Membagi (split) satu tabel menjadi dua tabel terpisah pada baris split_row_index (0-indexed)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if split_row_index <= 0 or split_row_index >= len(table.rows):
+            return f"Error: split_row_index {split_row_index} tidak valid. Harus berada di antara 1 dan {len(table.rows)-1}."
+
+        orig_tbl = table._element
+        new_tbl = OxmlElement("w:tbl")
+
+        tblPr = orig_tbl.xpath("w:tblPr")
+        if tblPr:
+            new_tbl.append(deepcopy(tblPr[0]))
+
+        tblGrid = orig_tbl.xpath("w:tblGrid")
+        if tblGrid:
+            new_tbl.append(deepcopy(tblGrid[0]))
+
+        trs_to_move = orig_tbl.xpath("w:tr")[split_row_index:]
+        for tr in trs_to_move:
+            orig_tbl.remove(tr)
+            new_tbl.append(tr)
+
+        sep_p = OxmlElement("w:p")
+        orig_tbl.addnext(new_tbl)
+        orig_tbl.addnext(sep_p)
+
+        doc.save(str(path))
+        return f"Berhasil membagi tabel {table_index} pada baris {split_row_index}. Dokumen kini memiliki {len(doc.tables)} tabel di {path}."
+    except Exception as e:
+        return f"Error: Gagal membagi tabel di {file_path}: {e}"
 
 
 if __name__ == "__main__":

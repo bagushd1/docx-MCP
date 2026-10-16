@@ -11,11 +11,11 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`edit_table_docx`**: Edits specific cell content by table index, row, and column.
 - **`delete_table_docx`**: Deletes a table by its table index.
 - **`clear_docx`**: Clears all content (paragraphs and tables) from a document.
-- **`add_column_docx`**: Appends a new column to a table with optional cell values and width.
+- **`add_column_docx`**: Appends or inserts a new column to a table with optional cell values, width, and position (`insert_index`).
 - **`resize_table_docx`**: Resizes column widths (in inches) across all columns or for a single column.
 - **`set_table_visibility_docx`**: Toggles table border visibility (visible grid or transparent/borderless).
 - **`delete_column_docx`**: Deletes a specific column from a table by column index.
-- **`add_row_docx`**: Appends a new row to a table with optional cell values and height.
+- **`add_row_docx`**: Appends or inserts a new row to a table with optional cell values, height, and position (`insert_index`).
 - **`delete_row_docx`**: Deletes a specific row from a table by row index.
 - **`merge_cells_docx`**: Merges a rectangular range of cells within a table.
 - **`set_cell_shading_docx`**: Applies background color (HEX) to a cell, row, column, or entire table.
@@ -23,6 +23,10 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`set_table_alignment_docx`**: Sets table alignment on the document page (left, center, right).
 - **`set_cell_alignment_docx`**: Sets cell text alignment horizontally and/or vertically.
 - **`set_table_pagination_docx`**: Configures repeat header rows (`tblHeader`) and prevents row split (`cantSplit`).
+- **`set_cell_margins_docx`**: Sets cell padding/margins (in pt) on a specific cell or the entire table.
+- **`set_table_borders_docx`**: Configures custom borders per side (top, bottom, left, right, inside) with custom color and size.
+- **`set_cell_text_direction_docx`**: Rotates cell text direction (horizontal, 90° up, 270° down).
+- **`split_table_docx`**: Splits a table into two separate tables at a specified row index.
 
 ## Requirements
 
