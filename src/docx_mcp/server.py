@@ -1332,8 +1332,11 @@ def add_styled_paragraph_docx(
     highlight_color: str | None = None,
     alignment: str = "",
     line_spacing: float | None = None,
+    space_before_pt: float | None = None,
     space_after_pt: float | None = None,
     first_line_indent_inches: float | None = None,
+    left_indent_inches: float | None = None,
+    right_indent_inches: float | None = None,
     list_style: str = "",
     subscript: bool = False,
     superscript: bool = False,
@@ -1389,10 +1392,16 @@ def add_styled_paragraph_docx(
 
         if line_spacing is not None and line_spacing > 0:
             p.paragraph_format.line_spacing = line_spacing
+        if space_before_pt is not None:
+            p.paragraph_format.space_before = Pt(space_before_pt)
         if space_after_pt is not None:
             p.paragraph_format.space_after = Pt(space_after_pt)
         if first_line_indent_inches is not None:
             p.paragraph_format.first_line_indent = Inches(first_line_indent_inches)
+        if left_indent_inches is not None:
+            p.paragraph_format.left_indent = Inches(left_indent_inches)
+        if right_indent_inches is not None:
+            p.paragraph_format.right_indent = Inches(right_indent_inches)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(path))

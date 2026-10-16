@@ -334,8 +334,11 @@ class TestTableTools(unittest.TestCase):
             self.file_path,
             text="E=mc2 formula",
             line_spacing=2.0,
+            space_before_pt=4.0,
             space_after_pt=10.0,
             first_line_indent_inches=0.5,
+            left_indent_inches=0.3,
+            right_indent_inches=0.2,
             superscript=True,
             all_caps=True,
             underline_style="dotted",
@@ -346,8 +349,11 @@ class TestTableTools(unittest.TestCase):
         doc = Document(self.file_path)
         p = doc.paragraphs[0]
         self.assertEqual(p.paragraph_format.line_spacing, 2.0)
+        self.assertAlmostEqual(p.paragraph_format.space_before.pt, 4.0)
         self.assertAlmostEqual(p.paragraph_format.space_after.pt, 10.0)
         self.assertAlmostEqual(p.paragraph_format.first_line_indent.inches, 0.5)
+        self.assertAlmostEqual(p.paragraph_format.left_indent.inches, 0.3)
+        self.assertAlmostEqual(p.paragraph_format.right_indent.inches, 0.2)
         self.assertEqual(p.alignment, WD_ALIGN_PARAGRAPH.CENTER)
 
         run = p.runs[0]
