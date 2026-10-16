@@ -7,6 +7,9 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`read_docx`**: Extracts all paragraph text and tables from a `.docx` file.
 - **`create_or_append_docx`**: Creates a new `.docx` file or appends headings and paragraphs to an existing file.
 - **`replace_text_in_docx`**: Finds and replaces specific text across paragraphs and tables.
+- **`create_table_docx`**: Creates a new table from 2D data rows with an optional heading.
+- **`edit_table_docx`**: Edits specific cell content by table index, row, and column.
+- **`delete_table_docx`**: Deletes a table by its table index.
 
 ## Requirements
 
