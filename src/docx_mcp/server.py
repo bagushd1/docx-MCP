@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 from pathlib import Path
 from mcp.server.mcpserver import MCPServer
@@ -1507,22 +1509,42 @@ def add_styled_paragraph_docx(
 @mcp.tool()
 def add_picture_docx(
     file_path: str,
-    image_path: str,
+    image_path: str = "",
+    image_base64: str = "",
     width_inches: float | None = None,
     height_inches: float | None = None,
     width_cm: float | None = None,
     height_cm: float | None = None,
     alignment: str = "",
     caption: str = "",
+    alt_text: str = "",
+    title: str = "",
     paragraph_index: int | None = None,
     table_index: int | None = None,
     row: int | None = None,
     col: int | None = None,
 ) -> str:
-    """Menyisipkan gambar (.png/.jpg/dll) ke dokumen Word dengan pengaturan lebar/tinggi (Inches atau Cm), perataan, keterangan gambar (caption), atau ke dalam sel tabel"""
+    """Menyisipkan gambar (.png/.jpg/dll) ke dokumen Word melalui path file atau string base64 dengan opsi lebar/tinggi (Inches atau Cm), perataan, caption, alt text/title, atau ke dalam sel tabel"""
     try:
         path = validate_docx_path(file_path, must_exist=False)
-        img_path = validate_image_path(image_path)
+        if not image_path and not image_base64:
+            return "Error: Salah satu dari image_path atau image_base64 harus disertakan."
+
+        if image_base64:
+            raw_b64 = image_base64.strip()
+            if "," in raw_b64 and "base64" in raw_b64:
+                raw_b64 = raw_b64.split(",", 1)[1]
+            try:
+                img_bytes = base64.b64decode(raw_b64)
+            except Exception as b64_err:
+                return f"Error: Gagal mendecode image_base64: {b64_err}"
+            image_source = io.BytesIO(img_bytes)
+            img_desc_name = "gambar base64"
+        else:
+            img_path = validate_image_path(image_path)
+            image_source = str(img_path)
+            img_desc_name = f"gambar '{img_path.name}'"
+
         doc = Document(str(path)) if path.is_file() else Document()
 
         width = None
@@ -1577,7 +1599,17 @@ def add_picture_docx(
             kwargs["width"] = width
         if height is not None:
             kwargs["height"] = height
-        r.add_picture(str(img_path), **kwargs)
+        inline_shape = r.add_picture(image_source, **kwargs)
+
+        if alt_text or title:
+            try:
+                docPr = inline_shape._inline.docPr
+                if alt_text:
+                    docPr.set("descr", alt_text)
+                if title:
+                    docPr.set("title", title)
+            except Exception:
+                pass
 
         if caption:
             cap_p = cell.add_paragraph() if cell is not None else doc.add_paragraph()
@@ -1605,7 +1637,7 @@ def add_picture_docx(
             dim_desc.append(f"tinggi={height_cm}cm")
         dim_str = f" ({', '.join(dim_desc)})" if dim_desc else " (ukuran asli)"
 
-        return f"Berhasil menyisipkan gambar '{img_path.name}' ke {target_desc}{dim_str} di {path}."
+        return f"Berhasil menyisipkan {img_desc_name} ke {target_desc}{dim_str} di {path}."
     except Exception as e:
         return f"Error: Gagal menyisipkan gambar ke {file_path}: {e}"
 
@@ -1673,6 +1705,68 @@ def resize_picture_docx(
         return f"Error: Gagal mengubah ukuran gambar di {file_path}: {e}"
 
 
+@mcp.tool()
+def delete_picture_docx(file_path: str, picture_index: int = 0) -> str:
+    """Menghapus gambar dari dokumen .docx berdasarkan indeks gambar"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+        shapes = doc.inline_shapes
+        if not shapes:
+            return f"Error: Dokumen {path} tidak memiliki gambar."
+        if picture_index < 0 or picture_index >= len(shapes):
+            return f"Error: Indeks gambar {picture_index} tidak ditemukan. Total gambar: {len(shapes)}."
+
+        shape = shapes[picture_index]
+        inline_elem = shape._inline
+        parent = inline_elem.getparent()
+        if parent is not None:
+            parent.remove(inline_elem)
+        else:
+            return f"Error: Gagal menemukan elemen induk untuk gambar {picture_index}."
+
+        doc.save(str(path))
+        return f"Berhasil menghapus gambar {picture_index} dari {path}."
+    except Exception as e:
+        return f"Error: Gagal menghapus gambar dari {file_path}: {e}"
+
+
+@mcp.tool()
+def extract_images_docx(file_path: str, output_dir: str) -> str:
+    """Mengekstrak seluruh file gambar yang tertanam di dalam dokumen .docx dan menyimpannya ke folder output"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        out_path = Path(output_dir).expanduser().resolve()
+        allowed_dir = os.environ.get("DOCX_MCP_ALLOWED_DIR")
+        if allowed_dir:
+            allowed_base = Path(allowed_dir).expanduser().resolve()
+            if not out_path.is_relative_to(allowed_base):
+                raise PermissionError(
+                    f"Akses ditolak: Direktori output berada di luar direktori yang diizinkan ({allowed_base})."
+                )
+
+        out_path.mkdir(parents=True, exist_ok=True)
+        extracted_files = []
+
+        for rel in doc.part.rels.values():
+            if "image" in rel.reltype:
+                target_part = rel.target_part
+                filename = Path(target_part.partname).name
+                dest_file = out_path / filename
+                dest_file.write_bytes(target_part.blob)
+                extracted_files.append(filename)
+
+        if not extracted_files:
+            return f"Tidak ada gambar ditemukan di dalam dokumen {path}."
+
+        return f"Berhasil mengekstrak {len(extracted_files)} gambar ke {out_path}: {', '.join(extracted_files)}"
+    except Exception as e:
+        return f"Error: Gagal mengekstrak gambar dari {file_path}: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()
+
 

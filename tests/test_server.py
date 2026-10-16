@@ -12,9 +12,11 @@ from docx_mcp.server import (
     clear_docx,
     create_table_docx,
     delete_column_docx,
+    delete_picture_docx,
     delete_row_docx,
     delete_table_docx,
     edit_table_docx,
+    extract_images_docx,
     format_paragraph_docx,
     format_text_docx,
     get_images_info_docx,
@@ -463,9 +465,50 @@ class TestTableTools(unittest.TestCase):
         self.assertAlmostEqual(shape.width / 914400.0, 3.0, places=1)
         self.assertAlmostEqual(shape.height / 914400.0, 2.0, places=1)
 
+    def test_add_picture_base64_and_alt_text(self):
+        b64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        res = add_picture_docx(
+            self.file_path,
+            image_base64=b64_data,
+            width_inches=1.5,
+            alt_text="Logo Perusahaan",
+            title="Logo Utama",
+        )
+        self.assertIn("Berhasil menyisipkan gambar base64", res)
+
+        doc = Document(self.file_path)
+        self.assertEqual(len(doc.inline_shapes), 1)
+        shape = doc.inline_shapes[0]
+        self.assertEqual(shape._inline.docPr.get("descr"), "Logo Perusahaan")
+        self.assertEqual(shape._inline.docPr.get("title"), "Logo Utama")
+
+    def test_delete_picture(self):
+        b64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        add_picture_docx(self.file_path, image_base64=b64_data)
+        doc = Document(self.file_path)
+        self.assertEqual(len(doc.inline_shapes), 1)
+
+        res = delete_picture_docx(self.file_path, picture_index=0)
+        self.assertIn("Berhasil menghapus gambar 0", res)
+
+        doc_after = Document(self.file_path)
+        self.assertEqual(len(doc_after.inline_shapes), 0)
+
+    def test_extract_images(self):
+        b64_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        add_picture_docx(self.file_path, image_base64=b64_data)
+
+        out_dir = Path(self.tmp_dir.name) / "extracted_imgs"
+        res = extract_images_docx(self.file_path, str(out_dir))
+        self.assertIn("Berhasil mengekstrak 1 gambar", res)
+        self.assertTrue(out_dir.is_dir())
+        files = list(out_dir.glob("*"))
+        self.assertEqual(len(files), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
