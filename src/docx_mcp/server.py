@@ -7,7 +7,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE
 
 mcp = MCPServer("DocxEditor")
 
@@ -971,6 +971,19 @@ HIGHLIGHT_MAP = {
     "black": WD_COLOR_INDEX.BLACK,
 }
 
+UNDERLINE_MAP = {
+    "single": WD_UNDERLINE.SINGLE,
+    "double": WD_UNDERLINE.DOUBLE,
+    "thick": WD_UNDERLINE.THICK,
+    "dotted": WD_UNDERLINE.DOTTED,
+    "dashed": WD_UNDERLINE.DASH,
+    "dot_dash": WD_UNDERLINE.DOT_DASH,
+    "dot_dot_dash": WD_UNDERLINE.DOT_DOT_DASH,
+    "wave": WD_UNDERLINE.WAVY,
+    "wavy": WD_UNDERLINE.WAVY,
+    "none": False,
+}
+
 
 def parse_rgb_color(color_str: str) -> RGBColor:
     named_colors = {
@@ -1008,6 +1021,11 @@ def apply_font_to_run(
     underline: bool | None = None,
     strike: bool | None = None,
     highlight_color: str | None = None,
+    subscript: bool | None = None,
+    superscript: bool | None = None,
+    small_caps: bool | None = None,
+    all_caps: bool | None = None,
+    underline_style: str | None = None,
 ):
     if font_name:
         r.font.name = font_name
@@ -1024,6 +1042,18 @@ def apply_font_to_run(
         r.font.underline = underline
     if strike is not None:
         r.font.strike = strike
+    if subscript is not None:
+        r.font.subscript = subscript
+    if superscript is not None:
+        r.font.superscript = superscript
+    if small_caps is not None:
+        r.font.small_caps = small_caps
+    if all_caps is not None:
+        r.font.all_caps = all_caps
+    if underline_style:
+        clean_u = underline_style.strip().lower()
+        if clean_u in UNDERLINE_MAP:
+            r.font.underline = UNDERLINE_MAP[clean_u]
     if highlight_color:
         clean_hl = highlight_color.strip().lower()
         if clean_hl in HIGHLIGHT_MAP:
@@ -1041,8 +1071,28 @@ def apply_style_to_paragraph(
     underline: bool | None = None,
     strike: bool | None = None,
     highlight_color: str | None = None,
+    subscript: bool | None = None,
+    superscript: bool | None = None,
+    small_caps: bool | None = None,
+    all_caps: bool | None = None,
+    underline_style: str | None = None,
 ) -> int:
     applied = 0
+    font_kwargs = {
+        "font_name": font_name,
+        "font_size_pt": font_size_pt,
+        "color": color,
+        "bold": bold,
+        "italic": italic,
+        "underline": underline,
+        "strike": strike,
+        "highlight_color": highlight_color,
+        "subscript": subscript,
+        "superscript": superscript,
+        "small_caps": small_caps,
+        "all_caps": all_caps,
+        "underline_style": underline_style,
+    }
     if target_text and target_text in p.text:
         orig_text = p.text
         parts = orig_text.split(target_text)
@@ -1052,18 +1102,18 @@ def apply_style_to_paragraph(
                 p.add_run(part)
             if i < len(parts) - 1:
                 r = p.add_run(target_text)
-                apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+                apply_font_to_run(r, **font_kwargs)
                 applied += 1
     elif not target_text:
         if not p.runs and p.text:
             text = p.text
             p.text = ""
             r = p.add_run(text)
-            apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+            apply_font_to_run(r, **font_kwargs)
             applied += 1
         else:
             for r in p.runs:
-                apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+                apply_font_to_run(r, **font_kwargs)
                 applied += 1
     return applied
 
@@ -1084,8 +1134,13 @@ def format_text_docx(
     underline: bool | None = None,
     strike: bool | None = None,
     highlight_color: str | None = None,
+    subscript: bool | None = None,
+    superscript: bool | None = None,
+    small_caps: bool | None = None,
+    all_caps: bool | None = None,
+    underline_style: str | None = None,
 ) -> str:
-    """Mengatur jenis font, ukuran (Pt), warna teks (RGB/HEX/nama), bold, italic, underline, strikethrough, dan highlight pada teks di paragraf atau tabel"""
+    """Mengatur jenis font, ukuran (Pt), warna teks, bold, italic, underline, strikethrough, subscript, superscript, small_caps, all_caps, dan highlight"""
     try:
         path = validate_docx_path(file_path, must_exist=True)
         doc = Document(str(path))
@@ -1138,7 +1193,21 @@ def format_text_docx(
 
         for p in target_paragraphs:
             applied_total += apply_style_to_paragraph(
-                p, target_text, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color
+                p,
+                target_text=target_text,
+                font_name=font_name,
+                font_size_pt=font_size_pt,
+                color=color,
+                bold=bold,
+                italic=italic,
+                underline=underline,
+                strike=strike,
+                highlight_color=highlight_color,
+                subscript=subscript,
+                superscript=superscript,
+                small_caps=small_caps,
+                all_caps=all_caps,
+                underline_style=underline_style,
             )
 
         doc.save(str(path))
@@ -1155,8 +1224,18 @@ def format_text_docx(
             styles_summary.append(f"italic={italic}")
         if underline is not None:
             styles_summary.append(f"underline={underline}")
+        if underline_style:
+            styles_summary.append(f"underline_style='{underline_style}'")
         if strike is not None:
             styles_summary.append(f"strike={strike}")
+        if subscript is not None:
+            styles_summary.append(f"subscript={subscript}")
+        if superscript is not None:
+            styles_summary.append(f"superscript={superscript}")
+        if small_caps is not None:
+            styles_summary.append(f"small_caps={small_caps}")
+        if all_caps is not None:
+            styles_summary.append(f"all_caps={all_caps}")
         if highlight_color:
             styles_summary.append(f"highlight='{highlight_color}'")
 
@@ -1165,6 +1244,77 @@ def format_text_docx(
         return f"Berhasil memformat teks pada {scope_desc}{match_str} ({style_str}) di {path}."
     except Exception as e:
         return f"Error: Gagal memformat teks pada {file_path}: {e}"
+
+
+@mcp.tool()
+def format_paragraph_docx(
+    file_path: str,
+    paragraph_index: int | None = None,
+    line_spacing: float | None = None,
+    space_before_pt: float | None = None,
+    space_after_pt: float | None = None,
+    first_line_indent_inches: float | None = None,
+    left_indent_inches: float | None = None,
+    right_indent_inches: float | None = None,
+    alignment: str = "",
+    list_style: str = "",
+) -> str:
+    """Mengatur format paragraf: spasi baris (misal 1.5, 2.0), spasi sebelum/sesudah (pt), indentasi (inci), perataan, dan gaya list (bullet/number)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        target_paragraphs = []
+        if paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            target_paragraphs.append(doc.paragraphs[paragraph_index])
+            scope_desc = f"paragraf {paragraph_index}"
+        else:
+            target_paragraphs.extend(doc.paragraphs)
+            scope_desc = "seluruh paragraf dalam dokumen"
+
+        align_map = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        }
+        align_val = align_map.get(alignment.strip().lower()) if alignment else None
+
+        list_map = {
+            "bullet": "List Bullet",
+            "list_bullet": "List Bullet",
+            "number": "List Number",
+            "list_number": "List Number",
+        }
+        style_val = list_map.get(list_style.strip().lower(), list_style) if list_style else None
+
+        for p in target_paragraphs:
+            if style_val:
+                try:
+                    p.style = style_val
+                except Exception:
+                    pass
+            if align_val is not None:
+                p.alignment = align_val
+            if line_spacing is not None and line_spacing > 0:
+                p.paragraph_format.line_spacing = line_spacing
+            if space_before_pt is not None:
+                p.paragraph_format.space_before = Pt(space_before_pt)
+            if space_after_pt is not None:
+                p.paragraph_format.space_after = Pt(space_after_pt)
+            if first_line_indent_inches is not None:
+                p.paragraph_format.first_line_indent = Inches(first_line_indent_inches)
+            if left_indent_inches is not None:
+                p.paragraph_format.left_indent = Inches(left_indent_inches)
+            if right_indent_inches is not None:
+                p.paragraph_format.right_indent = Inches(right_indent_inches)
+
+        doc.save(str(path))
+        return f"Berhasil memformat tata letak dan spasi pada {scope_desc} di {path}."
+    except Exception as e:
+        return f"Error: Gagal memformat paragraf di {file_path}: {e}"
 
 
 @mcp.tool()
@@ -1181,8 +1331,17 @@ def add_styled_paragraph_docx(
     strike: bool = False,
     highlight_color: str | None = None,
     alignment: str = "",
+    line_spacing: float | None = None,
+    space_after_pt: float | None = None,
+    first_line_indent_inches: float | None = None,
+    list_style: str = "",
+    subscript: bool = False,
+    superscript: bool = False,
+    small_caps: bool = False,
+    all_caps: bool = False,
+    underline_style: str | None = None,
 ) -> str:
-    """Menambahkan paragraf atau heading baru dengan opsi font, ukuran, warna, gaya teks, dan perataan ke file .docx"""
+    """Menambahkan paragraf atau heading baru dengan opsi lengkap font, ukuran, warna, gaya teks, spasi, dan perataan ke file .docx"""
     try:
         path = validate_docx_path(file_path, must_exist=False)
         doc = Document(str(path)) if path.is_file() else Document()
@@ -1192,8 +1351,30 @@ def add_styled_paragraph_docx(
         else:
             p = doc.add_paragraph()
 
+        if list_style:
+            l_map = {"bullet": "List Bullet", "list_bullet": "List Bullet", "number": "List Number", "list_number": "List Number"}
+            try:
+                p.style = l_map.get(list_style.strip().lower(), list_style)
+            except Exception:
+                pass
+
         r = p.add_run(text)
-        apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+        apply_font_to_run(
+            r,
+            font_name=font_name,
+            font_size_pt=font_size_pt,
+            color=color,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            strike=strike,
+            highlight_color=highlight_color,
+            subscript=subscript,
+            superscript=superscript,
+            small_caps=small_caps,
+            all_caps=all_caps,
+            underline_style=underline_style,
+        )
 
         if alignment:
             align_map = {
@@ -1205,6 +1386,13 @@ def add_styled_paragraph_docx(
             clean_align = alignment.strip().lower()
             if clean_align in align_map:
                 p.alignment = align_map[clean_align]
+
+        if line_spacing is not None and line_spacing > 0:
+            p.paragraph_format.line_spacing = line_spacing
+        if space_after_pt is not None:
+            p.paragraph_format.space_after = Pt(space_after_pt)
+        if first_line_indent_inches is not None:
+            p.paragraph_format.first_line_indent = Inches(first_line_indent_inches)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(path))

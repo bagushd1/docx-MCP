@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE
 from docx_mcp.server import (
     add_column_docx,
     add_row_docx,
@@ -11,6 +13,7 @@ from docx_mcp.server import (
     delete_row_docx,
     delete_table_docx,
     edit_table_docx,
+    format_paragraph_docx,
     format_text_docx,
     merge_cells_docx,
     read_docx,
@@ -283,6 +286,76 @@ class TestTableTools(unittest.TestCase):
         )
         self.assertIn("tabel 0 baris 0", res)
 
+    def test_format_text_typography(self):
+        add_styled_paragraph_docx(self.file_path, text="H2O formula and special text")
+        res = format_text_docx(
+            self.file_path,
+            paragraph_index=0,
+            subscript=True,
+            small_caps=True,
+            underline_style="double",
+        )
+        self.assertIn("subscript=True", res)
+        self.assertIn("small_caps=True", res)
+        self.assertIn("underline_style='double'", res)
+
+        doc = Document(self.file_path)
+        run = doc.paragraphs[0].runs[0]
+        self.assertTrue(run.font.subscript)
+        self.assertTrue(run.font.small_caps)
+        self.assertEqual(run.font.underline, WD_UNDERLINE.DOUBLE)
+
+    def test_format_paragraph(self):
+        add_styled_paragraph_docx(self.file_path, text="Paragraf uji pemformatan spasi.")
+        res = format_paragraph_docx(
+            self.file_path,
+            paragraph_index=0,
+            line_spacing=1.5,
+            space_before_pt=6.0,
+            space_after_pt=12.0,
+            first_line_indent_inches=0.5,
+            left_indent_inches=0.25,
+            alignment="justify",
+            list_style="bullet",
+        )
+        self.assertIn("Berhasil memformat tata letak dan spasi pada paragraf 0", res)
+
+        doc = Document(self.file_path)
+        p = doc.paragraphs[0]
+        self.assertEqual(p.paragraph_format.line_spacing, 1.5)
+        self.assertAlmostEqual(p.paragraph_format.space_before.pt, 6.0)
+        self.assertAlmostEqual(p.paragraph_format.space_after.pt, 12.0)
+        self.assertAlmostEqual(p.paragraph_format.first_line_indent.inches, 0.5)
+        self.assertAlmostEqual(p.paragraph_format.left_indent.inches, 0.25)
+        self.assertEqual(p.alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
+
+    def test_add_styled_paragraph_advanced(self):
+        res = add_styled_paragraph_docx(
+            self.file_path,
+            text="E=mc2 formula",
+            line_spacing=2.0,
+            space_after_pt=10.0,
+            first_line_indent_inches=0.5,
+            superscript=True,
+            all_caps=True,
+            underline_style="dotted",
+            alignment="center",
+        )
+        self.assertIn("Berhasil menambahkan paragraf berformat", res)
+
+        doc = Document(self.file_path)
+        p = doc.paragraphs[0]
+        self.assertEqual(p.paragraph_format.line_spacing, 2.0)
+        self.assertAlmostEqual(p.paragraph_format.space_after.pt, 10.0)
+        self.assertAlmostEqual(p.paragraph_format.first_line_indent.inches, 0.5)
+        self.assertEqual(p.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+        run = p.runs[0]
+        self.assertTrue(run.font.superscript)
+        self.assertTrue(run.font.all_caps)
+        self.assertEqual(run.font.underline, WD_UNDERLINE.DOTTED)
+
 
 if __name__ == "__main__":
     unittest.main()
+
