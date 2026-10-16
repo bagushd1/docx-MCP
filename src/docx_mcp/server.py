@@ -5,11 +5,11 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from copy import deepcopy
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor, Cm, Mm
+from docx.shared import Inches, Pt, RGBColor, Cm, Mm, Length
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK, WD_TAB_ALIGNMENT
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 import latex2mathml.converter
 import mathml2omml
@@ -2426,6 +2426,9 @@ def add_equation_docx(
     display_mode: str = "block",
     text_before: str = "",
     text_after: str = "",
+    equation_number: str = "",
+    placeholder: str = "",
+    font_size_pt: float | None = None,
     alignment: str = "",
     space_before_pt: float | None = None,
     space_after_pt: float | None = None,
@@ -2435,7 +2438,7 @@ def add_equation_docx(
     row: int | None = None,
     col: int | None = None,
 ) -> str:
-    """Menyisipkan rumus matematika (Equation) ke file .docx dari format LaTeX, MathML, atau OMML. Mendukung mode block (persamaan terpisah di tengah) dan inline (sejajar teks), perataan, serta penempatan di paragraf atau sel tabel."""
+    """Menyisipkan rumus matematika (Equation) ke file .docx dari format LaTeX, MathML, atau OMML. Mendukung mode block (persamaan mandiri di tengah) dan inline (sejajar teks), penomoran persamaan rata kanan ala jurnal/skripsi (equation_number), penggantian placeholder teks (placeholder), ukuran font (font_size_pt), perataan, serta penempatan di paragraf atau sel tabel."""
     try:
         path = validate_docx_path(file_path, must_exist=False)
         doc = Document(str(path)) if path.is_file() else Document()
@@ -2443,12 +2446,75 @@ def add_equation_docx(
         if not equation or not equation.strip():
             return "Error: Parameter equation tidak boleh kosong."
 
-        is_block = (display_mode.lower().strip() in ("block", "display")) and (not text_before and not text_after)
+        is_block = (display_mode.lower().strip() in ("block", "display")) and (not text_before and not text_after and not equation_number and not placeholder)
 
         try:
             omml_elm = convert_to_omml_element(equation, is_block=is_block)
         except Exception as conv_err:
             return f"Error: Gagal mengonversi rumus matematika '{equation}': {conv_err}"
+
+        def apply_font_size(paragraph, size_pt):
+            if size_pt is not None:
+                sz_val = str(int(round(size_pt * 2)))
+                pPr = paragraph._p.get_or_add_pPr()
+                rPr = pPr.find(qn("w:rPr"))
+                if rPr is None:
+                    rPr = OxmlElement("w:rPr")
+                    pPr.append(rPr)
+                sz = rPr.find(qn("w:sz"))
+                if sz is None:
+                    sz = OxmlElement("w:sz")
+                    rPr.append(sz)
+                sz.set(qn("w:val"), sz_val)
+                for r in paragraph.runs:
+                    r.font.size = Pt(size_pt)
+
+        # Case A: Ganti Placeholder
+        if placeholder:
+            replaced_count = 0
+            target_paragraphs = []
+            if table_index is not None:
+                if table_index < 0 or table_index >= len(doc.tables):
+                    return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+                t = doc.tables[table_index]
+                if row is not None and col is not None:
+                    if row < 0 or row >= len(t.rows) or col < 0 or col >= len(t.rows[row].cells):
+                        return f"Error: Sel [{row}, {col}] tidak valid."
+                    target_paragraphs.extend(t.rows[row].cells[col].paragraphs)
+                else:
+                    for r_item in t.rows:
+                        for c_item in r_item.cells:
+                            target_paragraphs.extend(c_item.paragraphs)
+            elif paragraph_index is not None:
+                if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                    return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan."
+                target_paragraphs.append(doc.paragraphs[paragraph_index])
+            else:
+                target_paragraphs.extend(doc.paragraphs)
+                for t in doc.tables:
+                    for r_item in t.rows:
+                        for c_item in r_item.cells:
+                            target_paragraphs.extend(c_item.paragraphs)
+
+            for p in target_paragraphs:
+                if placeholder in p.text:
+                    full_text = p.text
+                    before, after = full_text.split(placeholder, 1)
+                    p.text = ""
+                    if before:
+                        p.add_run(before)
+                    p._p.append(deepcopy(omml_elm))
+                    if after:
+                        p.add_run(after)
+                    apply_font_size(p, font_size_pt)
+                    replaced_count += 1
+                    break
+
+            if replaced_count == 0:
+                return f"Error: Placeholder '{placeholder}' tidak ditemukan dalam target dokumen."
+            path.parent.mkdir(parents=True, exist_ok=True)
+            doc.save(str(path))
+            return f"Berhasil mengganti placeholder '{placeholder}' dengan rumus matematika pada {path}."
 
         align_map = {
             "left": WD_ALIGN_PARAGRAPH.LEFT,
@@ -2457,7 +2523,7 @@ def add_equation_docx(
             "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
         }
 
-        # Case 1: Di dalam tabel
+        # Case B: Di dalam tabel
         if table_index is not None:
             if table_index < 0 or table_index >= len(doc.tables):
                 return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
@@ -2475,7 +2541,7 @@ def add_equation_docx(
                 p = cell.add_paragraph()
             target_desc = f"di dalam tabel {table_index} sel [{row}, {col}]"
 
-        # Case 2: Pada paragraf tertentu
+        # Case C: Pada paragraf tertentu
         elif paragraph_index is not None:
             if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
                 return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
@@ -2486,28 +2552,56 @@ def add_equation_docx(
                 p = doc.paragraphs[paragraph_index]
                 target_desc = f"pada paragraf {paragraph_index}"
 
-        # Case 3: Di akhir dokumen
+        # Case D: Di akhir dokumen
         else:
             p = doc.add_paragraph()
             target_desc = "di akhir dokumen"
 
-        if text_before:
-            p.add_run(text_before)
+        # Academic / journal numbered equation with tab stops
+        if equation_number:
+            sec = doc.sections[0] if doc.sections else None
+            if sec and sec.page_width and sec.left_margin and sec.right_margin:
+                usable_width = sec.page_width - sec.left_margin - sec.right_margin
+            else:
+                usable_width = Inches(6.5)
+            mid_pos = Length(int(usable_width / 2))
 
-        p._p.append(omml_elm)
+            p.paragraph_format.tab_stops.add_tab_stop(mid_pos, WD_TAB_ALIGNMENT.CENTER)
+            p.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT)
 
-        if text_after:
-            p.add_run(text_after)
+            r_lead = p.add_run()
+            r_lead.add_tab()
+            if text_before:
+                r_lead.add_text(text_before)
+
+            p._p.append(omml_elm)
+
+            r_num = p.add_run()
+            r_num.add_tab()
+            r_num.add_text(equation_number)
+            if text_after:
+                r_num.add_text(f" {text_after}")
+            target_desc += f" dengan nomor '{equation_number}'"
+        else:
+            if text_before:
+                p.add_run(text_before)
+
+            p._p.append(omml_elm)
+
+            if text_after:
+                p.add_run(text_after)
+
+            if alignment and alignment.lower().strip() in align_map:
+                p.alignment = align_map[alignment.lower().strip()]
+            elif is_block and not alignment:
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        apply_font_size(p, font_size_pt)
 
         if space_before_pt is not None:
             p.paragraph_format.space_before = Pt(max(0.0, space_before_pt))
         if space_after_pt is not None:
             p.paragraph_format.space_after = Pt(max(0.0, space_after_pt))
-
-        if alignment and alignment.lower().strip() in align_map:
-            p.alignment = align_map[alignment.lower().strip()]
-        elif is_block and not alignment:
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(path))

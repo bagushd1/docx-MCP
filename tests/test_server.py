@@ -772,6 +772,44 @@ class TestTableTools(unittest.TestCase):
         res_err_syntax = add_equation_docx(self.file_path, equation=r"\frac{a}{")
         self.assertIn("Error: Gagal mengonversi rumus matematika", res_err_syntax)
 
+    def test_add_equation_numbered_and_placeholder(self):
+        doc = Document()
+        doc.add_paragraph("Solusi dari sistem adalah {{eq_placeholder}} dengan batas x > 0.")
+        doc.save(self.file_path)
+
+        # 1. Ganti placeholder dengan equation dan custom font_size_pt
+        res_ph = add_equation_docx(
+            self.file_path,
+            equation=r"x = \sqrt{y}",
+            placeholder="{{eq_placeholder}}",
+            font_size_pt=14.0,
+        )
+        self.assertIn("Berhasil mengganti placeholder '{{eq_placeholder}}'", res_ph)
+
+        content = read_docx(self.file_path)
+        self.assertNotIn("{{eq_placeholder}}", content)
+        self.assertIn("Solusi dari sistem adalah", content)
+        self.assertIn("[Rumus:", content)
+        self.assertIn("dengan batas x > 0.", content)
+
+        # 2. Rumus bernomor ala jurnal ilmiah
+        res_num = add_equation_docx(
+            self.file_path,
+            equation=r"F = ma",
+            equation_number="(2.1)",
+            font_size_pt=12.0,
+            space_before_pt=6.0,
+            space_after_pt=6.0,
+        )
+        self.assertIn("dengan nomor '(2.1)'", res_num)
+
+        doc_check = Document(self.file_path)
+        p_num = doc_check.paragraphs[-1]
+        tabs = p_num._p.xpath(".//w:tabs/w:tab")
+        self.assertEqual(len(tabs), 2)
+        r_texts = [r.text for r in p_num.runs]
+        self.assertIn("(2.1)", "".join(r_texts))
+
 
 if __name__ == "__main__":
     unittest.main()
