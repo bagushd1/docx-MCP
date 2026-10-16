@@ -1250,22 +1250,61 @@ def format_text_docx(
 def format_paragraph_docx(
     file_path: str,
     paragraph_index: int | None = None,
+    table_index: int | None = None,
+    row: int | None = None,
+    col: int | None = None,
     line_spacing: float | None = None,
+    line_spacing_pt: float | None = None,
     space_before_pt: float | None = None,
     space_after_pt: float | None = None,
     first_line_indent_inches: float | None = None,
     left_indent_inches: float | None = None,
     right_indent_inches: float | None = None,
+    hanging_indent_inches: float | None = None,
     alignment: str = "",
     list_style: str = "",
+    keep_with_next: bool | None = None,
+    page_break_before: bool | None = None,
+    widow_control: bool | None = None,
 ) -> str:
-    """Mengatur format paragraf: spasi baris (misal 1.5, 2.0), spasi sebelum/sesudah (pt), indentasi (inci), perataan, dan gaya list (bullet/number)"""
+    """Mengatur format paragraf: spasi baris (misal 1.5, 2.0 atau Pt), spasi sebelum/sesudah (pt), indentasi/hanging indent (inci), perataan, list, dan kontrol halaman (keep_with_next, page_break_before)"""
     try:
         path = validate_docx_path(file_path, must_exist=True)
         doc = Document(str(path))
 
         target_paragraphs = []
-        if paragraph_index is not None:
+        scope_desc = ""
+
+        if table_index is not None:
+            if table_index < 0 or table_index >= len(doc.tables):
+                return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+            table = doc.tables[table_index]
+            if row is not None and col is not None:
+                if row < 0 or row >= len(table.rows):
+                    return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+                if col < 0 or col >= len(table.rows[row].cells):
+                    return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+                target_paragraphs.extend(table.rows[row].cells[col].paragraphs)
+                scope_desc = f"tabel {table_index} sel [{row}, {col}]"
+            elif row is not None:
+                if row < 0 or row >= len(table.rows):
+                    return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+                for cell in table.rows[row].cells:
+                    target_paragraphs.extend(cell.paragraphs)
+                scope_desc = f"tabel {table_index} baris {row}"
+            elif col is not None:
+                if col < 0 or col >= len(table.columns):
+                    return f"Error: Indeks kolom {col} tidak valid. Total kolom: {len(table.columns)}."
+                for r_item in table.rows:
+                    if col < len(r_item.cells):
+                        target_paragraphs.extend(r_item.cells[col].paragraphs)
+                scope_desc = f"tabel {table_index} kolom {col}"
+            else:
+                for r_item in table.rows:
+                    for cell in r_item.cells:
+                        target_paragraphs.extend(cell.paragraphs)
+                scope_desc = f"seluruh tabel {table_index}"
+        elif paragraph_index is not None:
             if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
                 return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
             target_paragraphs.append(doc.paragraphs[paragraph_index])
@@ -1298,18 +1337,29 @@ def format_paragraph_docx(
                     pass
             if align_val is not None:
                 p.alignment = align_val
-            if line_spacing is not None and line_spacing > 0:
+            if line_spacing_pt is not None:
+                p.paragraph_format.line_spacing = Pt(line_spacing_pt)
+            elif line_spacing is not None and line_spacing > 0:
                 p.paragraph_format.line_spacing = line_spacing
             if space_before_pt is not None:
                 p.paragraph_format.space_before = Pt(space_before_pt)
             if space_after_pt is not None:
                 p.paragraph_format.space_after = Pt(space_after_pt)
+            if hanging_indent_inches is not None:
+                p.paragraph_format.left_indent = Inches(hanging_indent_inches)
+                p.paragraph_format.first_line_indent = Inches(-hanging_indent_inches)
             if first_line_indent_inches is not None:
                 p.paragraph_format.first_line_indent = Inches(first_line_indent_inches)
             if left_indent_inches is not None:
                 p.paragraph_format.left_indent = Inches(left_indent_inches)
             if right_indent_inches is not None:
                 p.paragraph_format.right_indent = Inches(right_indent_inches)
+            if keep_with_next is not None:
+                p.paragraph_format.keep_with_next = keep_with_next
+            if page_break_before is not None:
+                p.paragraph_format.page_break_before = page_break_before
+            if widow_control is not None:
+                p.paragraph_format.widow_control = widow_control
 
         doc.save(str(path))
         return f"Berhasil memformat tata letak dan spasi pada {scope_desc} di {path}."
@@ -1332,11 +1382,16 @@ def add_styled_paragraph_docx(
     highlight_color: str | None = None,
     alignment: str = "",
     line_spacing: float | None = None,
+    line_spacing_pt: float | None = None,
     space_before_pt: float | None = None,
     space_after_pt: float | None = None,
     first_line_indent_inches: float | None = None,
     left_indent_inches: float | None = None,
     right_indent_inches: float | None = None,
+    hanging_indent_inches: float | None = None,
+    keep_with_next: bool | None = None,
+    page_break_before: bool | None = None,
+    widow_control: bool | None = None,
     list_style: str = "",
     subscript: bool = False,
     superscript: bool = False,
@@ -1390,18 +1445,29 @@ def add_styled_paragraph_docx(
             if clean_align in align_map:
                 p.alignment = align_map[clean_align]
 
-        if line_spacing is not None and line_spacing > 0:
+        if line_spacing_pt is not None:
+            p.paragraph_format.line_spacing = Pt(line_spacing_pt)
+        elif line_spacing is not None and line_spacing > 0:
             p.paragraph_format.line_spacing = line_spacing
         if space_before_pt is not None:
             p.paragraph_format.space_before = Pt(space_before_pt)
         if space_after_pt is not None:
             p.paragraph_format.space_after = Pt(space_after_pt)
+        if hanging_indent_inches is not None:
+            p.paragraph_format.left_indent = Inches(hanging_indent_inches)
+            p.paragraph_format.first_line_indent = Inches(-hanging_indent_inches)
         if first_line_indent_inches is not None:
             p.paragraph_format.first_line_indent = Inches(first_line_indent_inches)
         if left_indent_inches is not None:
             p.paragraph_format.left_indent = Inches(left_indent_inches)
         if right_indent_inches is not None:
             p.paragraph_format.right_indent = Inches(right_indent_inches)
+        if keep_with_next is not None:
+            p.paragraph_format.keep_with_next = keep_with_next
+        if page_break_before is not None:
+            p.paragraph_format.page_break_before = page_break_before
+        if widow_control is not None:
+            p.paragraph_format.widow_control = widow_control
 
         path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(path))

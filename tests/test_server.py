@@ -361,7 +361,45 @@ class TestTableTools(unittest.TestCase):
         self.assertTrue(run.font.all_caps)
         self.assertEqual(run.font.underline, WD_UNDERLINE.DOTTED)
 
+    def test_format_paragraph_table_and_flow_control(self):
+        create_table_docx(self.file_path, [["H1", "H2"], ["A", "B"]])
+        res = format_paragraph_docx(
+            self.file_path,
+            table_index=0,
+            row=1,
+            col=1,
+            line_spacing_pt=14.0,
+            alignment="center",
+        )
+        self.assertIn("tabel 0 sel [1, 1]", res)
+
+        doc = Document(self.file_path)
+        p = doc.tables[0].rows[1].cells[1].paragraphs[0]
+        self.assertAlmostEqual(p.paragraph_format.line_spacing.pt, 14.0)
+        self.assertEqual(p.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+    def test_format_paragraph_hanging_and_flow(self):
+        add_styled_paragraph_docx(self.file_path, text="Daftar pustaka referensi...")
+        res = format_paragraph_docx(
+            self.file_path,
+            paragraph_index=0,
+            hanging_indent_inches=0.5,
+            keep_with_next=True,
+            page_break_before=True,
+            widow_control=True,
+        )
+        self.assertIn("Berhasil memformat tata letak dan spasi pada paragraf 0", res)
+
+        doc = Document(self.file_path)
+        p = doc.paragraphs[0]
+        self.assertAlmostEqual(p.paragraph_format.left_indent.inches, 0.5)
+        self.assertAlmostEqual(p.paragraph_format.first_line_indent.inches, -0.5)
+        self.assertTrue(p.paragraph_format.keep_with_next)
+        self.assertTrue(p.paragraph_format.page_break_before)
+        self.assertTrue(p.paragraph_format.widow_control)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
