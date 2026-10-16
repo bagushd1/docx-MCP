@@ -11,6 +11,8 @@ from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
+import latex2mathml.converter
+import mathml2omml
 
 mcp = MCPServer("DocxEditor")
 
@@ -87,11 +89,24 @@ def read_docx(file_path: str) -> str:
                 if bottom is not None:
                     bdr_val = bottom.get(qn("w:val"))
 
+        math_elms = p._p.xpath(".//m:oMath")
+        math_texts = []
+        for m in math_elms:
+            m_ts = m.xpath('.//*[local-name()="t"]')
+            txt = "".join([t.text or "" for t in m_ts]).strip()
+            if txt:
+                math_texts.append(txt)
+        math_desc = " ".join([f"[Rumus: {m}]" for m in math_texts])
+
+        bdr_desc = f" [Garis Pembatas: {bdr_val}]" if (bdr_val and bdr_val != "none") else ""
+
         if p_text:
-            if bdr_val and bdr_val != "none":
-                content.append(f"[P{i}] {p.text} [Garis Pembatas: {bdr_val}]")
-            else:
-                content.append(f"[P{i}] {p.text}")
+            combined = f"{p.text}{bdr_desc}"
+            if math_desc:
+                combined += f" {math_desc}"
+            content.append(f"[P{i}] {combined}")
+        elif math_desc:
+            content.append(f"[P{i}] {math_desc}{bdr_desc}")
         else:
             has_page_br = bool(p._p.xpath(".//w:br[@w:type='page' or not(@w:type)]"))
             has_col_br = bool(p._p.xpath(".//w:br[@w:type='column']"))
@@ -99,13 +114,28 @@ def read_docx(file_path: str) -> str:
                 content.append(f"[P{i}] [Page Break]")
             elif has_col_br:
                 content.append(f"[P{i}] [Column Break]")
-            elif bdr_val and bdr_val != "none":
+            elif bdr_desc:
                 content.append(f"[P{i}] --- Garis Horizontal ({bdr_val}) ---")
 
     for t_idx, table in enumerate(doc.tables):
         content.append(f"\n--- Tabel {t_idx} ---")
         for row in table.rows:
-            row_text = [cell.text.strip() for cell in row.cells]
+            row_text = []
+            for cell in row.cells:
+                cell_parts = []
+                for cp in cell.paragraphs:
+                    txt = cp.text.strip()
+                    math_elms = cp._p.xpath(".//m:oMath")
+                    m_txts = ["".join([t.text or "" for t in m.xpath('.//*[local-name()="t"]')]).strip() for m in math_elms]
+                    m_txts = [m for m in m_txts if m]
+                    m_desc = " ".join([f"[Rumus: {m}]" for m in m_txts])
+                    if txt and m_desc:
+                        cell_parts.append(f"{txt} {m_desc}")
+                    elif txt:
+                        cell_parts.append(txt)
+                    elif m_desc:
+                        cell_parts.append(m_desc)
+                row_text.append(" ".join(cell_parts).strip())
             content.append(" | ".join(row_text))
 
     if doc.inline_shapes:
@@ -2362,6 +2392,128 @@ def add_horizontal_rule_docx(
         return f"Berhasil menambahkan garis pembatas ({style}, {size_pt}pt, #{clean_color}, posisi={border_position}) {location_desc} pada {path}."
     except Exception as e:
         return f"Error: Gagal menambahkan garis pembatas ke {file_path}: {e}"
+
+
+def convert_to_omml_element(math_content: str, is_block: bool = False):
+    s = math_content.strip()
+    if s.startswith("<m:oMath") or s.startswith("<m:oMathPara"):
+        omml_xml = s
+        if "xmlns:m=" not in omml_xml:
+            first_space = omml_xml.find(" ")
+            first_close = omml_xml.find(">")
+            idx = first_space if (first_space != -1 and first_space < first_close) else first_close
+            omml_xml = omml_xml[:idx] + f" {nsdecls('m')}" + omml_xml[idx:]
+    elif "<math" in s:
+        omml_xml = mathml2omml.convert(s)
+        if "xmlns:m=" not in omml_xml:
+            omml_xml = omml_xml.replace("<m:oMath", f"<m:oMath {nsdecls('m')}", 1)
+    else:
+        mathml_str = latex2mathml.converter.convert(s)
+        omml_xml = mathml2omml.convert(mathml_str)
+        if "xmlns:m=" not in omml_xml:
+            omml_xml = omml_xml.replace("<m:oMath", f"<m:oMath {nsdecls('m')}", 1)
+
+    if is_block and not omml_xml.startswith("<m:oMathPara"):
+        omml_xml = f"<m:oMathPara {nsdecls('m')}>{omml_xml}</m:oMathPara>"
+
+    return parse_xml(omml_xml)
+
+
+@mcp.tool()
+def add_equation_docx(
+    file_path: str,
+    equation: str,
+    display_mode: str = "block",
+    text_before: str = "",
+    text_after: str = "",
+    alignment: str = "",
+    space_before_pt: float | None = None,
+    space_after_pt: float | None = None,
+    paragraph_index: int | None = None,
+    insert_before: bool = False,
+    table_index: int | None = None,
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Menyisipkan rumus matematika (Equation) ke file .docx dari format LaTeX, MathML, atau OMML. Mendukung mode block (persamaan terpisah di tengah) dan inline (sejajar teks), perataan, serta penempatan di paragraf atau sel tabel."""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        if not equation or not equation.strip():
+            return "Error: Parameter equation tidak boleh kosong."
+
+        is_block = (display_mode.lower().strip() in ("block", "display")) and (not text_before and not text_after)
+
+        try:
+            omml_elm = convert_to_omml_element(equation, is_block=is_block)
+        except Exception as conv_err:
+            return f"Error: Gagal mengonversi rumus matematika '{equation}': {conv_err}"
+
+        align_map = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        }
+
+        # Case 1: Di dalam tabel
+        if table_index is not None:
+            if table_index < 0 or table_index >= len(doc.tables):
+                return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+            table = doc.tables[table_index]
+            if row is None or col is None:
+                return "Error: row dan col wajib diisi jika table_index ditentukan."
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            cell = table.rows[row].cells[col]
+            if len(cell.paragraphs) == 1 and not cell.paragraphs[0].text.strip() and not cell.paragraphs[0]._p.xpath(".//m:oMath"):
+                p = cell.paragraphs[0]
+            else:
+                p = cell.add_paragraph()
+            target_desc = f"di dalam tabel {table_index} sel [{row}, {col}]"
+
+        # Case 2: Pada paragraf tertentu
+        elif paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            if insert_before:
+                p = doc.paragraphs[paragraph_index].insert_paragraph_before()
+                target_desc = f"sebelum paragraf {paragraph_index}"
+            else:
+                p = doc.paragraphs[paragraph_index]
+                target_desc = f"pada paragraf {paragraph_index}"
+
+        # Case 3: Di akhir dokumen
+        else:
+            p = doc.add_paragraph()
+            target_desc = "di akhir dokumen"
+
+        if text_before:
+            p.add_run(text_before)
+
+        p._p.append(omml_elm)
+
+        if text_after:
+            p.add_run(text_after)
+
+        if space_before_pt is not None:
+            p.paragraph_format.space_before = Pt(max(0.0, space_before_pt))
+        if space_after_pt is not None:
+            p.paragraph_format.space_after = Pt(max(0.0, space_after_pt))
+
+        if alignment and alignment.lower().strip() in align_map:
+            p.alignment = align_map[alignment.lower().strip()]
+        elif is_block and not alignment:
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return f"Berhasil menyisipkan rumus matematika ({display_mode}) {target_desc} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal menyisipkan rumus matematika ke {file_path}: {e}"
 
 
 if __name__ == "__main__":

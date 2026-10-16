@@ -9,6 +9,8 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "latex2mathml>=3.81.1",
+    "mathml2omml>=0.0.2",
     "mcp[cli]>=2.3.0",
     "python-docx>=1.2.0",
 ]

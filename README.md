@@ -40,6 +40,7 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`add_section_docx`**: Appends a new section (e.g. for switching to landscape, multi-column, or different paper size / margins) with section start types (`new_page`, `continuous`, etc.), column count/spacing, and page numbering restart.
 - **`add_page_break_docx`**: Inserts a hard page break, column break, or line break at document end, before a specific paragraph, or inside a table cell.
 - **`add_horizontal_rule_docx`**: Inserts a standalone horizontal divider rule or applies a bottom/top/box border directly to an existing paragraph (ideal for Kop Surat letterhead dividers) with customizable style (`single`, `double`, `triple`, `thick`, `thick_thin`, `thin_thick`, `wave`, etc.), thickness in Pt, left/right indentation, alignment, color, and spacing.
+- **`add_equation_docx`**: Inserts native editable Word mathematical equations (OMML) converted from LaTeX or MathML with block/inline display modes, optional leading/trailing text, paragraph alignment, and table cell support.
 
 ## Requirements
 

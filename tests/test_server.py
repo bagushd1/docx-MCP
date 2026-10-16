@@ -8,6 +8,7 @@ from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 from docx.oxml.ns import qn
 from docx_mcp.server import (
     add_column_docx,
+    add_equation_docx,
     add_horizontal_rule_docx,
     add_page_break_docx,
     add_picture_docx,
@@ -706,6 +707,70 @@ class TestTableTools(unittest.TestCase):
         content = read_docx(self.file_path)
         self.assertIn("[Garis Pembatas: thickThinMediumGap]", content)
         self.assertIn("--- Garis Horizontal (single) ---", content)
+
+    def test_add_equation_block_latex(self):
+        # 1. Tambah rumus kuadrat mode block
+        latex = r"x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"
+        res = add_equation_docx(self.file_path, equation=latex, display_mode="block")
+        self.assertIn("Berhasil menyisipkan rumus matematika", res)
+
+        doc = Document(self.file_path)
+        p = doc.paragraphs[0]
+        # Verifikasi keberadaan tag oMath dan oMathPara
+        self.assertIsNotNone(p._p.find(qn("m:oMathPara")))
+        self.assertIsNotNone(p._p.find(qn("m:oMathPara")).find(qn("m:oMath")))
+
+        # Verifikasi pembacaan lewat read_docx
+        content = read_docx(self.file_path)
+        self.assertIn("[Rumus:", content)
+
+    def test_add_equation_inline_and_table(self):
+        doc = Document()
+        doc.add_paragraph("Teks awal:")
+        doc.save(self.file_path)
+
+        # 1. Rumus inline dengan text_before dan text_after
+        res_inline = add_equation_docx(
+            self.file_path,
+            equation=r"E = mc^2",
+            display_mode="inline",
+            text_before="Teori relativitas: ",
+            text_after=" adalah rumus terkenal Einstein.",
+            paragraph_index=0,
+            insert_before=False,
+        )
+        self.assertIn("Berhasil menyisipkan rumus matematika", res_inline)
+
+        # 2. Rumus di dalam tabel
+        create_table_docx(self.file_path, [["No", "Rumus"]])
+        res_tbl = add_equation_docx(
+            self.file_path,
+            equation=r"\int_0^1 x dx",
+            table_index=0,
+            row=0,
+            col=1,
+            display_mode="inline",
+        )
+        self.assertIn("Berhasil menyisipkan rumus matematika (inline) di dalam tabel 0 sel [0, 1]", res_tbl)
+
+        content = read_docx(self.file_path)
+        self.assertIn("Teori relativitas:", content)
+        self.assertIn("[Rumus:", content)
+        self.assertIn("adalah rumus terkenal Einstein.", content)
+
+    def test_add_equation_mathml_and_error(self):
+        # 1. MathML input
+        mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>a</mi><mo>+</mo><mi>b</mi></math>'
+        res_mathml = add_equation_docx(self.file_path, equation=mathml, display_mode="inline")
+        self.assertIn("Berhasil menyisipkan rumus matematika", res_mathml)
+
+        # 2. Input kosong
+        res_err_empty = add_equation_docx(self.file_path, equation="")
+        self.assertIn("Error: Parameter equation tidak boleh kosong", res_err_empty)
+
+        # 3. Input sintaks latex tidak valid
+        res_err_syntax = add_equation_docx(self.file_path, equation=r"\frac{a}{")
+        self.assertIn("Error: Gagal mengonversi rumus matematika", res_err_syntax)
 
 
 if __name__ == "__main__":
