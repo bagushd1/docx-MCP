@@ -3,11 +3,11 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from copy import deepcopy
 from docx import Document
-from docx.shared import Inches
+from docx.shared import Inches, Pt, RGBColor
 from docx.oxml import parse_xml, OxmlElement
-from docx.oxml.ns import nsdecls
+from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 
 mcp = MCPServer("DocxEditor")
 
@@ -951,6 +951,266 @@ def split_table_docx(
         return f"Berhasil membagi tabel {table_index} pada baris {split_row_index}. Dokumen kini memiliki {len(doc.tables)} tabel di {path}."
     except Exception as e:
         return f"Error: Gagal membagi tabel di {file_path}: {e}"
+
+
+HIGHLIGHT_MAP = {
+    "yellow": WD_COLOR_INDEX.YELLOW,
+    "green": WD_COLOR_INDEX.GREEN,
+    "bright_green": WD_COLOR_INDEX.BRIGHT_GREEN,
+    "cyan": WD_COLOR_INDEX.TURQUOISE,
+    "turquoise": WD_COLOR_INDEX.TURQUOISE,
+    "pink": WD_COLOR_INDEX.PINK,
+    "blue": WD_COLOR_INDEX.BLUE,
+    "red": WD_COLOR_INDEX.RED,
+    "dark_blue": WD_COLOR_INDEX.DARK_BLUE,
+    "teal": WD_COLOR_INDEX.TEAL,
+    "violet": WD_COLOR_INDEX.VIOLET,
+    "dark_red": WD_COLOR_INDEX.DARK_RED,
+    "dark_yellow": WD_COLOR_INDEX.DARK_YELLOW,
+    "gray": WD_COLOR_INDEX.GRAY_50,
+    "black": WD_COLOR_INDEX.BLACK,
+}
+
+
+def parse_rgb_color(color_str: str) -> RGBColor:
+    named_colors = {
+        "black": (0, 0, 0),
+        "white": (255, 255, 255),
+        "red": (255, 0, 0),
+        "green": (0, 128, 0),
+        "blue": (0, 0, 255),
+        "yellow": (255, 255, 0),
+        "gray": (128, 128, 128),
+        "grey": (128, 128, 128),
+        "orange": (255, 165, 0),
+        "purple": (128, 0, 128),
+    }
+    s = color_str.strip().lower()
+    if s in named_colors:
+        return RGBColor(*named_colors[s])
+    if "," in s:
+        parts = [int(x.strip()) for x in s.split(",")]
+        if len(parts) == 3 and all(0 <= p <= 255 for p in parts):
+            return RGBColor(*parts)
+    clean_hex = s.lstrip("#")
+    if len(clean_hex) == 6:
+        return RGBColor(int(clean_hex[0:2], 16), int(clean_hex[2:4], 16), int(clean_hex[4:6], 16))
+    raise ValueError(f"Warna '{color_str}' tidak valid. Gunakan HEX (misal '#FF0000'), RGB ('255, 0, 0'), atau nama warna.")
+
+
+def apply_font_to_run(
+    r,
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strike: bool | None = None,
+    highlight_color: str | None = None,
+):
+    if font_name:
+        r.font.name = font_name
+        r._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:hAnsi"), font_name)
+    if font_size_pt is not None and font_size_pt > 0:
+        r.font.size = Pt(font_size_pt)
+    if color:
+        r.font.color.rgb = parse_rgb_color(color)
+    if bold is not None:
+        r.font.bold = bold
+    if italic is not None:
+        r.font.italic = italic
+    if underline is not None:
+        r.font.underline = underline
+    if strike is not None:
+        r.font.strike = strike
+    if highlight_color:
+        clean_hl = highlight_color.strip().lower()
+        if clean_hl in HIGHLIGHT_MAP:
+            r.font.highlight_color = HIGHLIGHT_MAP[clean_hl]
+
+
+def apply_style_to_paragraph(
+    p,
+    target_text: str | None = None,
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strike: bool | None = None,
+    highlight_color: str | None = None,
+) -> int:
+    applied = 0
+    if target_text and target_text in p.text:
+        orig_text = p.text
+        parts = orig_text.split(target_text)
+        p.text = ""
+        for i, part in enumerate(parts):
+            if part:
+                p.add_run(part)
+            if i < len(parts) - 1:
+                r = p.add_run(target_text)
+                apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+                applied += 1
+    elif not target_text:
+        if not p.runs and p.text:
+            text = p.text
+            p.text = ""
+            r = p.add_run(text)
+            apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+            applied += 1
+        else:
+            for r in p.runs:
+                apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+                applied += 1
+    return applied
+
+
+@mcp.tool()
+def format_text_docx(
+    file_path: str,
+    target_text: str | None = None,
+    paragraph_index: int | None = None,
+    table_index: int | None = None,
+    row: int | None = None,
+    col: int | None = None,
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool | None = None,
+    italic: bool | None = None,
+    underline: bool | None = None,
+    strike: bool | None = None,
+    highlight_color: str | None = None,
+) -> str:
+    """Mengatur jenis font, ukuran (Pt), warna teks (RGB/HEX/nama), bold, italic, underline, strikethrough, dan highlight pada teks di paragraf atau tabel"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+        applied_total = 0
+
+        target_paragraphs = []
+        scope_desc = ""
+
+        if table_index is not None:
+            if table_index < 0 or table_index >= len(doc.tables):
+                return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+            table = doc.tables[table_index]
+            if row is not None and col is not None:
+                if row < 0 or row >= len(table.rows):
+                    return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+                if col < 0 or col >= len(table.rows[row].cells):
+                    return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+                target_paragraphs.extend(table.rows[row].cells[col].paragraphs)
+                scope_desc = f"tabel {table_index} sel [{row}, {col}]"
+            elif row is not None:
+                if row < 0 or row >= len(table.rows):
+                    return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+                for cell in table.rows[row].cells:
+                    target_paragraphs.extend(cell.paragraphs)
+                scope_desc = f"tabel {table_index} baris {row}"
+            elif col is not None:
+                if col < 0 or col >= len(table.columns):
+                    return f"Error: Indeks kolom {col} tidak valid. Total kolom: {len(table.columns)}."
+                for r in table.rows:
+                    if col < len(r.cells):
+                        target_paragraphs.extend(r.cells[col].paragraphs)
+                scope_desc = f"tabel {table_index} kolom {col}"
+            else:
+                for r in table.rows:
+                    for cell in r.cells:
+                        target_paragraphs.extend(cell.paragraphs)
+                scope_desc = f"seluruh tabel {table_index}"
+        elif paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            target_paragraphs.append(doc.paragraphs[paragraph_index])
+            scope_desc = f"paragraf {paragraph_index}"
+        else:
+            target_paragraphs.extend(doc.paragraphs)
+            for t in doc.tables:
+                for r in t.rows:
+                    for c in r.cells:
+                        target_paragraphs.extend(c.paragraphs)
+            scope_desc = "seluruh dokumen"
+
+        for p in target_paragraphs:
+            applied_total += apply_style_to_paragraph(
+                p, target_text, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color
+            )
+
+        doc.save(str(path))
+        styles_summary = []
+        if font_name:
+            styles_summary.append(f"font='{font_name}'")
+        if font_size_pt:
+            styles_summary.append(f"size={font_size_pt}pt")
+        if color:
+            styles_summary.append(f"color='{color}'")
+        if bold is not None:
+            styles_summary.append(f"bold={bold}")
+        if italic is not None:
+            styles_summary.append(f"italic={italic}")
+        if underline is not None:
+            styles_summary.append(f"underline={underline}")
+        if strike is not None:
+            styles_summary.append(f"strike={strike}")
+        if highlight_color:
+            styles_summary.append(f"highlight='{highlight_color}'")
+
+        style_str = ", ".join(styles_summary) if styles_summary else "default style"
+        match_str = f" untuk teks '{target_text}'" if target_text else ""
+        return f"Berhasil memformat teks pada {scope_desc}{match_str} ({style_str}) di {path}."
+    except Exception as e:
+        return f"Error: Gagal memformat teks pada {file_path}: {e}"
+
+
+@mcp.tool()
+def add_styled_paragraph_docx(
+    file_path: str,
+    text: str,
+    heading_level: int = 0,
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool = False,
+    italic: bool = False,
+    underline: bool = False,
+    strike: bool = False,
+    highlight_color: str | None = None,
+    alignment: str = "",
+) -> str:
+    """Menambahkan paragraf atau heading baru dengan opsi font, ukuran, warna, gaya teks, dan perataan ke file .docx"""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        if heading_level > 0:
+            p = doc.add_heading(level=min(heading_level, 9))
+        else:
+            p = doc.add_paragraph()
+
+        r = p.add_run(text)
+        apply_font_to_run(r, font_name, font_size_pt, color, bold, italic, underline, strike, highlight_color)
+
+        if alignment:
+            align_map = {
+                "left": WD_ALIGN_PARAGRAPH.LEFT,
+                "center": WD_ALIGN_PARAGRAPH.CENTER,
+                "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+            }
+            clean_align = alignment.strip().lower()
+            if clean_align in align_map:
+                p.alignment = align_map[clean_align]
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return f"Berhasil menambahkan paragraf berformat ke {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan paragraf berformat di {file_path}: {e}"
 
 
 if __name__ == "__main__":

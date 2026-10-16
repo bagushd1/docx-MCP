@@ -27,6 +27,8 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`set_table_borders_docx`**: Configures custom borders per side (top, bottom, left, right, inside) with custom color and size.
 - **`set_cell_text_direction_docx`**: Rotates cell text direction (horizontal, 90° up, 270° down).
 - **`split_table_docx`**: Splits a table into two separate tables at a specified row index.
+- **`format_text_docx`**: Formats font name, size (Pt), color (RGB/HEX), bold, italic, underline, strikethrough, and highlight on paragraphs, table cells, or targeted phrases.
+- **`add_styled_paragraph_docx`**: Appends a new paragraph or heading with comprehensive font, styling, and alignment options.
 
 ## Requirements
 

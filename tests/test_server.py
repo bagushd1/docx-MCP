@@ -4,12 +4,14 @@ from pathlib import Path
 from docx_mcp.server import (
     add_column_docx,
     add_row_docx,
+    add_styled_paragraph_docx,
     clear_docx,
     create_table_docx,
     delete_column_docx,
     delete_row_docx,
     delete_table_docx,
     edit_table_docx,
+    format_text_docx,
     merge_cells_docx,
     read_docx,
     resize_table_docx,
@@ -225,6 +227,61 @@ class TestTableTools(unittest.TestCase):
         res = split_table_docx(self.file_path, table_index=0, split_row_index=2)
         self.assertIn("Berhasil membagi tabel 0 pada baris 2", res)
         self.assertIn("memiliki 2 tabel", res)
+
+    def test_add_styled_paragraph(self):
+        res = add_styled_paragraph_docx(
+            self.file_path,
+            text="Heading Bergaya",
+            heading_level=1,
+            font_name="Times New Roman",
+            font_size_pt=18.0,
+            color="#003366",
+            bold=True,
+            italic=True,
+            alignment="center",
+        )
+        self.assertIn("Berhasil menambahkan paragraf berformat", res)
+
+    def test_format_text_paragraph(self):
+        add_styled_paragraph_docx(self.file_path, text="Teks awal sebelum diformat.")
+        res = format_text_docx(
+            self.file_path,
+            paragraph_index=0,
+            font_name="Arial",
+            font_size_pt=12.0,
+            color="red",
+            bold=True,
+            underline=True,
+            strike=True,
+            highlight_color="yellow",
+        )
+        self.assertIn("Berhasil memformat teks pada paragraf 0", res)
+        self.assertIn("font='Arial'", res)
+        self.assertIn("size=12.0pt", res)
+
+    def test_format_text_target_phrase(self):
+        add_styled_paragraph_docx(self.file_path, text="Kalimat ini ada kata kunci penting di dalamnya.")
+        res = format_text_docx(
+            self.file_path,
+            target_text="kata kunci",
+            font_name="Courier New",
+            font_size_pt=14.0,
+            color="#FF5500",
+            bold=True,
+        )
+        self.assertIn("Berhasil memformat teks pada seluruh dokumen untuk teks 'kata kunci'", res)
+
+    def test_format_text_table_cell(self):
+        create_table_docx(self.file_path, [["Nama", "Skor"], ["Budi", "100"]])
+        res = format_text_docx(
+            self.file_path,
+            table_index=0,
+            row=0,
+            font_name="Arial",
+            bold=True,
+            color="#FFFFFF",
+        )
+        self.assertIn("tabel 0 baris 0", res)
 
 
 if __name__ == "__main__":
