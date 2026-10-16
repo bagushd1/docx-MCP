@@ -640,6 +640,10 @@ class TestTableTools(unittest.TestCase):
         breaks = doc_check.element.xpath(".//w:br")
         self.assertGreaterEqual(len(breaks), 3)
 
+        # Verifikasi bahwa read_docx menampilkan marker page break
+        content = read_docx(self.file_path)
+        self.assertIn("[Page Break]", content)
+
     def test_add_horizontal_rule(self):
         doc = Document()
         doc.add_paragraph("Kementerian Pendidikan dan Kebudayaan")
@@ -647,10 +651,10 @@ class TestTableTools(unittest.TestCase):
         doc.add_paragraph("Jl. Salemba Raya No. 4, Jakarta Pusat")
         doc.save(self.file_path)
 
-        # 1. Terapkan garis kop surat (double, 2.25 pt) langsung pada paragraf alamat (paragraf ke-2)
+        # 1. Terapkan garis kop surat instansi resmi (thick_thin) langsung pada paragraf alamat
         res_kop = add_horizontal_rule_docx(
             self.file_path,
-            style="double",
+            style="thick_thin",
             size_pt=2.25,
             color="#000000",
             space_after_pt=4.0,
@@ -659,7 +663,7 @@ class TestTableTools(unittest.TestCase):
         )
         self.assertIn("Berhasil menambahkan garis pembatas", res_kop)
 
-        # 2. Sisipkan standalone rule pembatas bab
+        # 2. Sisipkan standalone rule pembatas bab dengan indentasi
         res_rule = add_horizontal_rule_docx(
             self.file_path,
             style="single",
@@ -667,6 +671,9 @@ class TestTableTools(unittest.TestCase):
             color="blue",
             space_before_pt=6.0,
             space_after_pt=12.0,
+            indent_left_inches=1.0,
+            indent_right_inches=1.0,
+            alignment="center",
         )
         self.assertIn("Berhasil menambahkan garis pembatas", res_rule)
 
@@ -679,11 +686,13 @@ class TestTableTools(unittest.TestCase):
         self.assertIsNotNone(pBdr_kop)
         bottom_kop = pBdr_kop.find(qn("w:bottom"))
         self.assertIsNotNone(bottom_kop)
-        self.assertEqual(bottom_kop.get(qn("w:val")), "double")
+        self.assertEqual(bottom_kop.get(qn("w:val")), "thickThinMediumGap")
         self.assertEqual(bottom_kop.get(qn("w:sz")), "18")  # 2.25 * 8 = 18
 
         # Cek standalone rule di akhir dokumen
         p_last = doc_check.paragraphs[-1]
+        self.assertAlmostEqual(p_last.paragraph_format.left_indent.inches, 1.0, places=1)
+        self.assertAlmostEqual(p_last.paragraph_format.right_indent.inches, 1.0, places=1)
         pPr_last = p_last._p.find(qn("w:pPr"))
         self.assertIsNotNone(pPr_last)
         pBdr_last = pPr_last.find(qn("w:pBdr"))
@@ -692,6 +701,11 @@ class TestTableTools(unittest.TestCase):
         self.assertIsNotNone(bottom_last)
         self.assertEqual(bottom_last.get(qn("w:val")), "single")
         self.assertEqual(bottom_last.get(qn("w:color")), "0000FF")  # blue
+
+        # Cek visibilitas di read_docx
+        content = read_docx(self.file_path)
+        self.assertIn("[Garis Pembatas: thickThinMediumGap]", content)
+        self.assertIn("--- Garis Horizontal (single) ---", content)
 
 
 if __name__ == "__main__":

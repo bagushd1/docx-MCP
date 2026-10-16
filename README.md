@@ -39,7 +39,7 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`get_page_setup_docx`**: Inspects page dimensions, orientation, margins, gutter, mirror margins status, multi-column setup, and page numbering settings for all sections in the document.
 - **`add_section_docx`**: Appends a new section (e.g. for switching to landscape, multi-column, or different paper size / margins) with section start types (`new_page`, `continuous`, etc.), column count/spacing, and page numbering restart.
 - **`add_page_break_docx`**: Inserts a hard page break, column break, or line break at document end, before a specific paragraph, or inside a table cell.
-- **`add_horizontal_rule_docx`**: Inserts a standalone horizontal divider rule or applies a bottom/top/box border directly to an existing paragraph (ideal for Kop Surat letterhead dividers) with customizable style (`single`, `double`, `triple`, `thick`, `wave`, etc.), thickness in Pt, color, and spacing.
+- **`add_horizontal_rule_docx`**: Inserts a standalone horizontal divider rule or applies a bottom/top/box border directly to an existing paragraph (ideal for Kop Surat letterhead dividers) with customizable style (`single`, `double`, `triple`, `thick`, `thick_thin`, `thin_thick`, `wave`, etc.), thickness in Pt, left/right indentation, alignment, color, and spacing.
 
 ## Requirements
 

@@ -77,8 +77,30 @@ def read_docx(file_path: str) -> str:
     content = []
 
     for i, p in enumerate(doc.paragraphs):
-        if p.text.strip():
-            content.append(f"[P{i}] {p.text}")
+        p_text = p.text.strip()
+        pPr = p._p.find(qn("w:pPr"))
+        bdr_val = None
+        if pPr is not None:
+            bdr_elm = pPr.find(qn("w:pBdr"))
+            if bdr_elm is not None:
+                bottom = bdr_elm.find(qn("w:bottom"))
+                if bottom is not None:
+                    bdr_val = bottom.get(qn("w:val"))
+
+        if p_text:
+            if bdr_val and bdr_val != "none":
+                content.append(f"[P{i}] {p.text} [Garis Pembatas: {bdr_val}]")
+            else:
+                content.append(f"[P{i}] {p.text}")
+        else:
+            has_page_br = bool(p._p.xpath(".//w:br[@w:type='page' or not(@w:type)]"))
+            has_col_br = bool(p._p.xpath(".//w:br[@w:type='column']"))
+            if has_page_br:
+                content.append(f"[P{i}] [Page Break]")
+            elif has_col_br:
+                content.append(f"[P{i}] [Column Break]")
+            elif bdr_val and bdr_val != "none":
+                content.append(f"[P{i}] --- Garis Horizontal ({bdr_val}) ---")
 
     for t_idx, table in enumerate(doc.tables):
         content.append(f"\n--- Tabel {t_idx} ---")
@@ -2227,8 +2249,11 @@ def add_horizontal_rule_docx(
     border_position: str = "bottom",
     paragraph_index: int | None = None,
     apply_to_existing: bool = False,
+    indent_left_inches: float | None = None,
+    indent_right_inches: float | None = None,
+    alignment: str = "",
 ) -> str:
-    """Menyisipkan garis horizontal (rule / pembatas bab) atau menambahkan garis pembatas kop surat/paragraf dengan gaya (single, double, triple, thick, wave, dotted, dashed), ketebalan (pt), posisi border, dan warna kustom."""
+    """Menyisipkan garis horizontal (rule / pembatas bab) atau menambahkan garis pembatas kop surat/paragraf dengan gaya (single, double, triple, thick, thick_thin, thin_thick, thin_thick_thin, wave, dotted, dashed), ketebalan (pt), indentasi, posisi border, dan warna kustom."""
     try:
         path = validate_docx_path(file_path, must_exist=False)
         doc = Document(str(path)) if path.is_file() else Document()
@@ -2245,10 +2270,19 @@ def add_horizontal_rule_docx(
             "wave": "wave",
             "double_wave": "doubleWave",
             "doublewave": "doubleWave",
+            "thick_thin": "thickThinMediumGap",
+            "thickthin": "thickThinMediumGap",
+            "thick_thin_med": "thickThinMediumGap",
+            "thin_thick": "thinThickMediumGap",
+            "thinthick": "thinThickMediumGap",
+            "thin_thick_med": "thinThickMediumGap",
+            "thin_thick_thin": "thinThickThinMediumGap",
+            "thinthickthin": "thinThickThinMediumGap",
+            "thick_between_thin": "thinThickThinMediumGap",
             "none": "none",
             "nil": "none",
         }
-        val = style_map.get(style.lower().strip(), "single")
+        val = style_map.get(style.lower().strip(), style.strip())
         sz_val = str(max(1, int(round(size_pt * 8))))
 
         clean_color = "000000"
@@ -2278,6 +2312,20 @@ def add_horizontal_rule_docx(
             p.paragraph_format.space_before = Pt(max(0.0, space_before_pt))
             p.paragraph_format.space_after = Pt(max(0.0, space_after_pt))
             p.paragraph_format.line_spacing = Pt(1)
+
+        if indent_left_inches is not None:
+            p.paragraph_format.left_indent = Inches(max(0.0, indent_left_inches))
+        if indent_right_inches is not None:
+            p.paragraph_format.right_indent = Inches(max(0.0, indent_right_inches))
+        if alignment:
+            align_map = {
+                "left": WD_ALIGN_PARAGRAPH.LEFT,
+                "center": WD_ALIGN_PARAGRAPH.CENTER,
+                "right": WD_ALIGN_PARAGRAPH.RIGHT,
+                "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+            }
+            if alignment.lower().strip() in align_map:
+                p.alignment = align_map[alignment.lower().strip()]
 
         pPr = p._p.get_or_add_pPr()
         pBdr = pPr.find(qn("w:pBdr"))
