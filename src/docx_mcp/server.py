@@ -1811,6 +1811,11 @@ def apply_section_formatting(
     footer_distance_inches: float | None = None,
     footer_distance_cm: float | None = None,
     different_first_page_header_footer: bool | None = None,
+    columns_count: int | None = None,
+    column_spacing_inches: float | None = None,
+    column_spacing_cm: float | None = None,
+    page_number_start: int | None = None,
+    page_number_format: str = "",
 ):
     target_orient = orientation.strip().lower() if orientation else None
 
@@ -1891,14 +1896,45 @@ def apply_section_formatting(
     if different_first_page_header_footer is not None:
         sec.different_first_page_header_footer = different_first_page_header_footer
 
+    if columns_count is not None and columns_count >= 1:
+        sectPr = sec._sectPr
+        if column_spacing_inches is not None:
+            space_twips = int(column_spacing_inches * 1440)
+        elif column_spacing_cm is not None:
+            space_twips = int(column_spacing_cm * 567)
+        else:
+            space_twips = 720
+
+        cols_elm = sectPr.find(qn("w:cols"))
+        if cols_elm is None:
+            cols_elm = parse_xml(f'<w:cols {nsdecls("w")} w:space="{space_twips}"/>')
+            sectPr.append(cols_elm)
+        cols_elm.set(qn("w:num"), str(columns_count))
+        cols_elm.set(qn("w:space"), str(space_twips))
+
+    if page_number_start is not None or page_number_format:
+        sectPr = sec._sectPr
+        pg_elm = sectPr.find(qn("w:pgNumType"))
+        if pg_elm is None:
+            pg_elm = OxmlElement("w:pgNumType")
+            sectPr.append(pg_elm)
+        if page_number_start is not None:
+            pg_elm.set(qn("w:start"), str(page_number_start))
+        if page_number_format:
+            pg_elm.set(qn("w:fmt"), page_number_format.strip())
+
 
 @mcp.tool()
 def get_page_setup_docx(file_path: str) -> str:
-    """Membaca informasi ukuran kertas, orientasi, margin (cm/inci), gutter, dan header/footer distance untuk seluruh section dokumen"""
+    """Membaca informasi ukuran kertas, orientasi, margin (cm/inci), gutter, header/footer distance, kolom, dan penomoran halaman untuk seluruh section dokumen"""
     try:
         path = validate_docx_path(file_path, must_exist=True)
         doc = Document(str(path))
         lines = [f"Pengaturan Halaman Dokumen {path.name} (Total {len(doc.sections)} section):"]
+
+        mirror_elm = doc.settings.element.find(qn("w:mirrorMargins"))
+        mirror_status = "Aktif (Facing Pages)" if mirror_elm is not None else "Tidak Aktif"
+        lines.append(f"- Status Margin Cermin (Mirror Margins): {mirror_status}")
 
         for idx, sec in enumerate(doc.sections):
             w_cm = sec.page_width / 360000.0
@@ -1929,6 +1965,18 @@ def get_page_setup_docx(file_path: str) -> str:
             if sec.gutter:
                 lines.append(f"- Gutter: {sec.gutter / 360000.0:.2f} cm")
             lines.append(f"- Beda Halaman Pertama (Cover): {'Ya' if sec.different_first_page_header_footer else 'Tidak'}")
+
+            cols_elm = sec._sectPr.find(qn("w:cols"))
+            if cols_elm is not None and cols_elm.get(qn("w:num")):
+                num_c = cols_elm.get(qn("w:num"))
+                sp_twips = int(cols_elm.get(qn("w:space"), "720"))
+                lines.append(f"- Jumlah Kolom: {num_c} (Jeda={sp_twips / 567.0:.2f} cm)")
+
+            pg_elm = sec._sectPr.find(qn("w:pgNumType"))
+            if pg_elm is not None:
+                pg_start = pg_elm.get(qn("w:start"), "otomatis")
+                pg_fmt = pg_elm.get(qn("w:fmt"), "default")
+                lines.append(f"- Penomoran Halaman: Mulai={pg_start}, Format={pg_fmt}")
 
         return "\n".join(lines)
     except Exception as e:
@@ -1961,11 +2009,27 @@ def set_page_setup_docx(
     footer_distance_inches: float | None = None,
     footer_distance_cm: float | None = None,
     different_first_page_header_footer: bool | None = None,
+    columns_count: int | None = None,
+    column_spacing_inches: float | None = None,
+    column_spacing_cm: float | None = None,
+    page_number_start: int | None = None,
+    page_number_format: str = "",
+    mirror_margins: bool | None = None,
 ) -> str:
-    """Mengatur ukuran kertas (A4, Letter, F4/Folio, Legal, dll), orientasi (Portrait/Landscape), margin (cm/inci/preset: normal, narrow, skripsi), gutter, dan jarak header/footer"""
+    """Mengatur ukuran kertas (A4, Letter, F4/Folio, Legal, dll), orientasi, margin (cm/inci/preset: normal, narrow, skripsi), gutter, multi-kolom koran, restart nomor halaman, dan mirror margins"""
     try:
         path = validate_docx_path(file_path, must_exist=False)
         doc = Document(str(path)) if path.is_file() else Document()
+
+        if mirror_margins is not None:
+            settings_elm = doc.settings.element
+            existing = settings_elm.find(qn("w:mirrorMargins"))
+            if mirror_margins:
+                if existing is None:
+                    settings_elm.append(OxmlElement("w:mirrorMargins"))
+            else:
+                if existing is not None:
+                    settings_elm.remove(existing)
 
         target_sections = []
         if section_index is not None:
@@ -2002,6 +2066,11 @@ def set_page_setup_docx(
                 footer_distance_inches=footer_distance_inches,
                 footer_distance_cm=footer_distance_cm,
                 different_first_page_header_footer=different_first_page_header_footer,
+                columns_count=columns_count,
+                column_spacing_inches=column_spacing_inches,
+                column_spacing_cm=column_spacing_cm,
+                page_number_start=page_number_start,
+                page_number_format=page_number_format,
             )
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2033,8 +2102,13 @@ def add_section_docx(
     gutter_inches: float | None = None,
     gutter_cm: float | None = None,
     different_first_page_header_footer: bool | None = None,
+    columns_count: int | None = None,
+    column_spacing_inches: float | None = None,
+    column_spacing_cm: float | None = None,
+    page_number_start: int | None = None,
+    page_number_format: str = "",
 ) -> str:
-    """Menambahkan section baru ke dokumen Word (misal halaman baru dengan orientasi Landscape atau ukuran kertas berbeda)"""
+    """Menambahkan section baru ke dokumen Word (misal halaman baru dengan orientasi Landscape, format 2 kolom, atau restart nomor halaman)"""
     try:
         path = validate_docx_path(file_path, must_exist=False)
         doc = Document(str(path)) if path.is_file() else Document()
@@ -2068,6 +2142,11 @@ def add_section_docx(
             gutter_inches=gutter_inches,
             gutter_cm=gutter_cm,
             different_first_page_header_footer=different_first_page_header_footer,
+            columns_count=columns_count,
+            column_spacing_inches=column_spacing_inches,
+            column_spacing_cm=column_spacing_cm,
+            page_number_start=page_number_start,
+            page_number_format=page_number_format,
         )
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2080,6 +2159,7 @@ def add_section_docx(
 
 if __name__ == "__main__":
     mcp.run()
+
 
 
 

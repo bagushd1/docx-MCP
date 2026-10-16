@@ -5,6 +5,7 @@ from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
+from docx.oxml.ns import qn
 from docx_mcp.server import (
     add_column_docx,
     add_picture_docx,
@@ -570,9 +571,53 @@ class TestTableTools(unittest.TestCase):
         self.assertEqual(doc.sections[1].orientation, WD_ORIENTATION.LANDSCAPE)
         self.assertAlmostEqual(doc.sections[1].top_margin / 360000.0, 1.27, places=1)
 
+    def test_page_setup_columns_and_numbering(self):
+        res = set_page_setup_docx(
+            self.file_path,
+            columns_count=2,
+            column_spacing_cm=1.0,
+            page_number_start=1,
+            page_number_format="lowerRoman",
+            mirror_margins=True,
+        )
+        self.assertIn("Berhasil memperbarui pengaturan halaman", res)
+
+        info = get_page_setup_docx(self.file_path)
+        self.assertIn("Jumlah Kolom: 2", info)
+        self.assertIn("Mulai=1, Format=lowerRoman", info)
+        self.assertIn("Status Margin Cermin (Mirror Margins): Aktif", info)
+
+        doc = Document(self.file_path)
+        sec = doc.sections[0]
+        cols = sec._sectPr.find(qn("w:cols"))
+        self.assertIsNotNone(cols)
+        self.assertEqual(cols.get(qn("w:num")), "2")
+
+        pg = sec._sectPr.find(qn("w:pgNumType"))
+        self.assertIsNotNone(pg)
+        self.assertEqual(pg.get(qn("w:fmt")), "lowerRoman")
+        self.assertEqual(pg.get(qn("w:start")), "1")
+
+        mirror = doc.settings.element.find(qn("w:mirrorMargins"))
+        self.assertIsNotNone(mirror)
+
+    def test_add_section_with_columns(self):
+        add_section_docx(
+            self.file_path,
+            start_type="new_page",
+            columns_count=3,
+            column_spacing_cm=0.5,
+        )
+        doc = Document(self.file_path)
+        self.assertEqual(len(doc.sections), 2)
+        cols = doc.sections[1]._sectPr.find(qn("w:cols"))
+        self.assertIsNotNone(cols)
+        self.assertEqual(cols.get(qn("w:num")), "3")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 
