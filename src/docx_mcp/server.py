@@ -5,6 +5,8 @@ from docx import Document
 from docx.shared import Inches
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 mcp = MCPServer("DocxEditor")
 
@@ -356,6 +358,333 @@ def delete_column_docx(
         return f"Berhasil menghapus kolom {col_index} dari tabel {table_index} di {path}."
     except Exception as e:
         return f"Error: Gagal menghapus kolom di {file_path}: {e}"
+
+
+@mcp.tool()
+def add_row_docx(
+    file_path: str,
+    table_index: int,
+    values: list[str] | None = None,
+    height_inches: float | None = None,
+) -> str:
+    """Menambahkan satu baris baru pada tabel docx dengan teks sel opsional dan tinggi opsional"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        row = table.add_row()
+
+        if height_inches and height_inches > 0:
+            row.height = Inches(height_inches)
+
+        if values:
+            for idx, val in enumerate(values[: len(row.cells)]):
+                row.cells[idx].text = str(val)
+
+        doc.save(str(path))
+        new_row_idx = len(table.rows) - 1
+        return f"Berhasil menambahkan baris baru pada indeks {new_row_idx} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan baris di {file_path}: {e}"
+
+
+@mcp.tool()
+def delete_row_docx(
+    file_path: str,
+    table_index: int,
+    row_index: int,
+) -> str:
+    """Menghapus satu baris tertentu dari tabel docx berdasarkan row_index (0-indexed)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if len(table.rows) <= 1:
+            return "Error: Tabel hanya memiliki 1 baris. Gunakan delete_table_docx jika ingin menghapus seluruh tabel."
+
+        if row_index < 0 or row_index >= len(table.rows):
+            return f"Error: Indeks baris {row_index} tidak valid. Total baris: {len(table.rows)}."
+
+        tr = table.rows[row_index]._element
+        tr.getparent().remove(tr)
+
+        doc.save(str(path))
+        return f"Berhasil menghapus baris {row_index} dari tabel {table_index} di {path}."
+    except Exception as e:
+        return f"Error: Gagal menghapus baris di {file_path}: {e}"
+
+
+@mcp.tool()
+def merge_cells_docx(
+    file_path: str,
+    table_index: int,
+    start_row: int,
+    start_col: int,
+    end_row: int,
+    end_col: int,
+) -> str:
+    """Menggabungkan (merge) area sel dari [start_row, start_col] sampai [end_row, end_col] (0-indexed)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if not (0 <= start_row < len(table.rows) and 0 <= end_row < len(table.rows)):
+            return f"Error: Indeks baris tidak valid (rentang baris tabel: 0 sampai {len(table.rows)-1})."
+
+        if not (0 <= start_col < len(table.columns) and 0 <= end_col < len(table.columns)):
+            return f"Error: Indeks kolom tidak valid (rentang kolom tabel: 0 sampai {len(table.columns)-1})."
+
+        cell_a = table.cell(start_row, start_col)
+        cell_b = table.cell(end_row, end_col)
+        cell_a.merge(cell_b)
+
+        doc.save(str(path))
+        return f"Berhasil menggabungkan sel dari [{start_row}, {start_col}] ke [{end_row}, {end_col}] pada tabel {table_index} di {path}."
+    except Exception as e:
+        return f"Error: Gagal menggabungkan sel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_cell_shading_docx(
+    file_path: str,
+    table_index: int,
+    color_hex: str,
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Memberikan warna latar belakang (shading) pada sel/baris/kolom/tabel dengan format HEX (contoh: 'E0E0E0' atau '#E0E0E0')"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        clean_hex = color_hex.lstrip("#").upper()
+        if len(clean_hex) != 6 or not all(c in "0123456789ABCDEF" for c in clean_hex):
+            return f"Error: Format warna '{color_hex}' tidak valid. Gunakan format HEX 6 karakter, misal 'E0E0E0' atau '#FFFFFF'."
+
+        def apply_shd(cell):
+            tcPr = cell._element.get_or_add_tcPr()
+            for s in tcPr.xpath("w:shd"):
+                tcPr.remove(s)
+            tcPr.append(parse_xml(f'<w:shd {nsdecls("w")} w:fill="{clean_hex}"/>'))
+
+        if row is not None and col is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            apply_shd(table.rows[row].cells[col])
+            target_desc = f"sel [{row}, {col}]"
+        elif row is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            for cell in table.rows[row].cells:
+                apply_shd(cell)
+            target_desc = f"seluruh baris {row}"
+        elif col is not None:
+            if col < 0 or col >= len(table.columns):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom: {len(table.columns)}."
+            for r in table.rows:
+                if col < len(r.cells):
+                    apply_shd(r.cells[col])
+            target_desc = f"seluruh kolom {col}"
+        else:
+            for r in table.rows:
+                for cell in r.cells:
+                    apply_shd(cell)
+            target_desc = "seluruh tabel"
+
+        doc.save(str(path))
+        return f"Berhasil menerapkan warna #{clean_hex} pada {target_desc} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal memberikan warna sel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_table_style_docx(
+    file_path: str,
+    table_index: int,
+    style_name: str,
+) -> str:
+    """Mengubah template style bawaan Word untuk tabel (misalnya 'Table Grid', 'Light Shading', 'Normal Table')"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        table.style = style_name
+        doc.save(str(path))
+        return f"Berhasil mengubah style tabel {table_index} menjadi '{style_name}' di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengubah style tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_table_alignment_docx(
+    file_path: str,
+    table_index: int,
+    alignment: str,
+) -> str:
+    """Mengatur perataan posisi tabel di halaman dokumen ('left', 'center', atau 'right')"""
+    try:
+        align_map = {
+            "left": WD_TABLE_ALIGNMENT.LEFT,
+            "center": WD_TABLE_ALIGNMENT.CENTER,
+            "right": WD_TABLE_ALIGNMENT.RIGHT,
+        }
+        align_key = alignment.strip().lower()
+        if align_key not in align_map:
+            return f"Error: Alignment '{alignment}' tidak valid. Pilihan: 'left', 'center', 'right'."
+
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+        table.alignment = align_map[align_key]
+        doc.save(str(path))
+        return f"Berhasil mengubah perataan tabel {table_index} menjadi '{align_key}' di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur perataan tabel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_cell_alignment_docx(
+    file_path: str,
+    table_index: int,
+    horizontal: str = "",
+    vertical: str = "",
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Mengatur perataan teks sel: horizontal ('left', 'center', 'right', 'justify') dan/atau vertikal ('top', 'center', 'bottom')"""
+    try:
+        h_map = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        }
+        v_map = {
+            "top": WD_ALIGN_VERTICAL.TOP,
+            "center": WD_ALIGN_VERTICAL.CENTER,
+            "bottom": WD_ALIGN_VERTICAL.BOTTOM,
+        }
+
+        h_val = h_map.get(horizontal.strip().lower()) if horizontal else None
+        v_val = v_map.get(vertical.strip().lower()) if vertical else None
+
+        if horizontal and h_val is None:
+            return f"Error: Perataan horizontal '{horizontal}' tidak valid. Pilihan: 'left', 'center', 'right', 'justify'."
+        if vertical and v_val is None:
+            return f"Error: Perataan vertikal '{vertical}' tidak valid. Pilihan: 'top', 'center', 'bottom'."
+        if not horizontal and not vertical:
+            return "Error: Berikan setidaknya salah satu parameter 'horizontal' atau 'vertical'."
+
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        def apply_align(cell):
+            if v_val is not None:
+                cell.vertical_alignment = v_val
+            if h_val is not None:
+                for p in cell.paragraphs:
+                    p.alignment = h_val
+
+        if row is not None and col is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            apply_align(table.rows[row].cells[col])
+            target_desc = f"sel [{row}, {col}]"
+        elif row is not None:
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            for cell in table.rows[row].cells:
+                apply_align(cell)
+            target_desc = f"seluruh baris {row}"
+        elif col is not None:
+            if col < 0 or col >= len(table.columns):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom: {len(table.columns)}."
+            for r in table.rows:
+                if col < len(r.cells):
+                    apply_align(r.cells[col])
+            target_desc = f"seluruh kolom {col}"
+        else:
+            for r in table.rows:
+                for cell in r.cells:
+                    apply_align(cell)
+            target_desc = "seluruh tabel"
+
+        doc.save(str(path))
+        return f"Berhasil mengubah perataan pada {target_desc} di tabel {table_index} pada {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur perataan sel di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_table_pagination_docx(
+    file_path: str,
+    table_index: int,
+    repeat_header_rows: int = 1,
+    cant_split: bool = True,
+) -> str:
+    """Mengatur opsi cetak/pagination tabel: mengulang header di setiap halaman (repeat_header_rows) dan mencegah baris terbelah (cant_split)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if table_index < 0 or table_index >= len(doc.tables):
+            return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+
+        table = doc.tables[table_index]
+
+        if repeat_header_rows > 0:
+            for idx in range(min(repeat_header_rows, len(table.rows))):
+                trPr = table.rows[idx]._tr.get_or_add_trPr()
+                for h in trPr.xpath("w:tblHeader"):
+                    trPr.remove(h)
+                trPr.append(parse_xml(f'<w:tblHeader {nsdecls("w")}/>'))
+
+        if cant_split:
+            for row in table.rows:
+                trPr = row._tr.get_or_add_trPr()
+                for cs in trPr.xpath("w:cantSplit"):
+                    trPr.remove(cs)
+                trPr.append(parse_xml(f'<w:cantSplit {nsdecls("w")}/>'))
+
+        doc.save(str(path))
+        return f"Berhasil mengatur opsi pagination (repeat_header_rows={repeat_header_rows}, cant_split={cant_split}) pada tabel {table_index} di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur pagination tabel di {file_path}: {e}"
 
 
 if __name__ == "__main__":

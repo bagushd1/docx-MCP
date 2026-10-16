@@ -3,13 +3,21 @@ import unittest
 from pathlib import Path
 from docx_mcp.server import (
     add_column_docx,
+    add_row_docx,
     clear_docx,
     create_table_docx,
     delete_column_docx,
+    delete_row_docx,
     delete_table_docx,
     edit_table_docx,
+    merge_cells_docx,
     read_docx,
     resize_table_docx,
+    set_cell_alignment_docx,
+    set_cell_shading_docx,
+    set_table_alignment_docx,
+    set_table_pagination_docx,
+    set_table_style_docx,
     set_table_visibility_docx,
 )
 
@@ -120,6 +128,63 @@ class TestTableTools(unittest.TestCase):
         create_table_docx(self.file_path, [["A"]])
         res = delete_column_docx(self.file_path, table_index=0, col_index=0)
         self.assertIn("Error: Tabel hanya memiliki 1 kolom", res)
+
+    def test_add_row(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res = add_row_docx(self.file_path, table_index=0, values=["C", "D"], height_inches=0.5)
+        self.assertIn("Berhasil menambahkan baris baru pada indeks 1", res)
+        content = read_docx(self.file_path)
+        self.assertIn("C | D", content)
+
+    def test_delete_row(self):
+        create_table_docx(self.file_path, [["R0C0"], ["R1C0"], ["R2C0"]])
+        res = delete_row_docx(self.file_path, table_index=0, row_index=1)
+        self.assertIn("Berhasil menghapus baris 1", res)
+        content = read_docx(self.file_path)
+        self.assertIn("R0C0", content)
+        self.assertNotIn("R1C0", content)
+        self.assertIn("R2C0", content)
+
+    def test_delete_row_last_remaining(self):
+        create_table_docx(self.file_path, [["A"]])
+        res = delete_row_docx(self.file_path, table_index=0, row_index=0)
+        self.assertIn("Error: Tabel hanya memiliki 1 baris", res)
+
+    def test_merge_cells(self):
+        create_table_docx(self.file_path, [["A", "B"], ["C", "D"]])
+        res = merge_cells_docx(self.file_path, table_index=0, start_row=0, start_col=0, end_row=0, end_col=1)
+        self.assertIn("Berhasil menggabungkan sel dari [0, 0] ke [0, 1]", res)
+
+    def test_set_cell_shading(self):
+        create_table_docx(self.file_path, [["A", "B"], ["C", "D"]])
+        res_cell = set_cell_shading_docx(self.file_path, table_index=0, color_hex="#CCCCCC", row=0, col=0)
+        self.assertIn("Berhasil menerapkan warna #CCCCCC pada sel [0, 0]", res_cell)
+
+        res_row = set_cell_shading_docx(self.file_path, table_index=0, color_hex="E0E0E0", row=1)
+        self.assertIn("Berhasil menerapkan warna #E0E0E0 pada seluruh baris 1", res_row)
+
+        res_invalid = set_cell_shading_docx(self.file_path, table_index=0, color_hex="INVALID")
+        self.assertIn("Error: Format warna 'INVALID' tidak valid", res_invalid)
+
+    def test_set_table_style(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res = set_table_style_docx(self.file_path, table_index=0, style_name="Table Grid")
+        self.assertIn("Berhasil mengubah style tabel 0", res)
+
+    def test_set_table_alignment(self):
+        create_table_docx(self.file_path, [["A", "B"]])
+        res = set_table_alignment_docx(self.file_path, table_index=0, alignment="center")
+        self.assertIn("Berhasil mengubah perataan tabel 0 menjadi 'center'", res)
+
+    def test_set_cell_alignment(self):
+        create_table_docx(self.file_path, [["A", "B"], ["C", "D"]])
+        res = set_cell_alignment_docx(self.file_path, table_index=0, horizontal="center", vertical="center", row=0, col=0)
+        self.assertIn("Berhasil mengubah perataan pada sel [0, 0]", res)
+
+    def test_set_table_pagination(self):
+        create_table_docx(self.file_path, [["Header 1", "Header 2"], ["Data 1", "Data 2"]])
+        res = set_table_pagination_docx(self.file_path, table_index=0, repeat_header_rows=1, cant_split=True)
+        self.assertIn("Berhasil mengatur opsi pagination", res)
 
 
 if __name__ == "__main__":

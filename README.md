@@ -15,6 +15,14 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`resize_table_docx`**: Resizes column widths (in inches) across all columns or for a single column.
 - **`set_table_visibility_docx`**: Toggles table border visibility (visible grid or transparent/borderless).
 - **`delete_column_docx`**: Deletes a specific column from a table by column index.
+- **`add_row_docx`**: Appends a new row to a table with optional cell values and height.
+- **`delete_row_docx`**: Deletes a specific row from a table by row index.
+- **`merge_cells_docx`**: Merges a rectangular range of cells within a table.
+- **`set_cell_shading_docx`**: Applies background color (HEX) to a cell, row, column, or entire table.
+- **`set_table_style_docx`**: Sets the Word table template style (e.g. Table Grid, Light Shading).
+- **`set_table_alignment_docx`**: Sets table alignment on the document page (left, center, right).
+- **`set_cell_alignment_docx`**: Sets cell text alignment horizontally and/or vertically.
+- **`set_table_pagination_docx`**: Configures repeat header rows (`tblHeader`) and prevents row split (`cantSplit`).
 
 ## Requirements
 
