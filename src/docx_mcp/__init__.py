@@ -1,3 +1,6 @@
+from .server import mcp
+
 def main() -> None:
-    from server import mcp
     mcp.run()
+
+__all__ = ["main", "mcp"]

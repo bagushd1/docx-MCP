@@ -27,7 +27,7 @@ uv sync
 Run directly with `uv`:
 
 ```bash
-uv run server.py
+uv run docx-mcp
 ```
 
 ## MCP Client Configuration
@@ -43,7 +43,7 @@ Add this server to your MCP client configuration (e.g. `mcp_config.json`):
         "--directory",
         "/path/to/docx-mcp",
         "run",
-        "server.py"
+        "docx-mcp"
       ]
     }
   }
