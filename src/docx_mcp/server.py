@@ -2610,6 +2610,326 @@ def add_equation_docx(
         return f"Error: Gagal menyisipkan rumus matematika ke {file_path}: {e}"
 
 
+def populate_header_footer_container(
+    container,
+    text: str = "",
+    include_page_number: bool = False,
+    include_total_pages: bool = False,
+    page_number_format_text: str = "",
+    alignment: str = "",
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool = False,
+    italic: bool = False,
+):
+    align_map = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+        "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+    }
+
+    p = container.paragraphs[0]
+    p.text = ""
+    for child in list(p._p):
+        if child.tag.split("}")[-1] != "pPr":
+            p._p.remove(child)
+    for extra_p in list(container.paragraphs[1:]):
+        extra_p._p.getparent().remove(extra_p._p)
+
+    if alignment and alignment.lower().strip() in align_map:
+        p.alignment = align_map[alignment.lower().strip()]
+
+    def create_field_element(instr: str):
+        fld = OxmlElement("w:fldSimple")
+        fld.set(qn("w:instr"), instr)
+        r_elm = OxmlElement("w:r")
+        rPr = OxmlElement("w:rPr")
+        if font_name:
+            rf = OxmlElement("w:rFonts")
+            rf.set(qn("w:ascii"), font_name)
+            rf.set(qn("w:hAnsi"), font_name)
+            rPr.append(rf)
+        if font_size_pt and font_size_pt > 0:
+            sz = OxmlElement("w:sz")
+            sz.set(qn("w:val"), str(int(round(font_size_pt * 2))))
+            rPr.append(sz)
+        if bold:
+            rPr.append(OxmlElement("w:b"))
+        if italic:
+            rPr.append(OxmlElement("w:i"))
+        if color:
+            try:
+                rgb = parse_rgb_color(color)
+                c_elm = OxmlElement("w:color")
+                c_elm.set(qn("w:val"), f"{rgb[0]:02X}{rgb[1]:02X}{rgb[2]:02X}")
+                rPr.append(c_elm)
+            except Exception:
+                pass
+        r_elm.append(rPr)
+        t_elm = OxmlElement("w:t")
+        t_elm.text = "1"
+        r_elm.append(t_elm)
+        fld.append(r_elm)
+        return fld
+
+    def add_styled_text_run(run_text: str):
+        r = p.add_run(run_text)
+        apply_font_to_run(r, font_name=font_name, font_size_pt=font_size_pt, color=color, bold=bold, italic=italic)
+        return r
+
+    if page_number_format_text:
+        import re
+        tokens = re.split(r"(\{page\}|\{pages\})", page_number_format_text)
+        for token in tokens:
+            if token == "{page}":
+                p._p.append(create_field_element("PAGE"))
+            elif token == "{pages}":
+                p._p.append(create_field_element("NUMPAGES"))
+            elif token:
+                add_styled_text_run(token)
+    else:
+        if text:
+            add_styled_text_run(text)
+            if include_page_number:
+                add_styled_text_run(" ")
+
+        if include_page_number:
+            p._p.append(create_field_element("PAGE"))
+
+        if include_total_pages:
+            add_styled_text_run(" / ")
+            p._p.append(create_field_element("NUMPAGES"))
+
+
+@mcp.tool()
+def set_header_footer_docx(
+    file_path: str,
+    target: str = "footer",
+    section_index: int | None = None,
+    header_footer_type: str = "default",
+    preset: str = "",
+    text: str = "",
+    include_page_number: bool = False,
+    include_total_pages: bool = False,
+    page_number_format_text: str = "",
+    alignment: str = "",
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    color: str | None = None,
+    bold: bool = False,
+    italic: bool = False,
+    is_linked_to_previous: bool | None = None,
+) -> str:
+    """Mengatur isi Header atau Footer dan menyisipkan field nomor halaman fisik (PAGE / NUMPAGES) pada dokumen .docx. Mendukung halaman pertama berbeda (different_first_page), unlink section, font styling, perataan, serta preset standar skripsi (skripsi_chapter, skripsi_preliminary)."""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        if section_index is not None:
+            if section_index < 0 or section_index >= len(doc.sections):
+                return f"Error: Indeks section {section_index} tidak ditemukan. Total section: {len(doc.sections)}."
+            target_sections = [(section_index, doc.sections[section_index])]
+        else:
+            target_sections = list(enumerate(doc.sections))
+
+        preset_clean = preset.lower().strip()
+
+        for s_idx, sec in target_sections:
+            if is_linked_to_previous is not None:
+                sec.header.is_linked_to_previous = is_linked_to_previous
+                sec.footer.is_linked_to_previous = is_linked_to_previous
+                sec.first_page_header.is_linked_to_previous = is_linked_to_previous
+                sec.first_page_footer.is_linked_to_previous = is_linked_to_previous
+
+            if preset_clean == "skripsi_chapter":
+                sec.different_first_page_header_footer = True
+                if s_idx > 0 and is_linked_to_previous is None:
+                    sec.header.is_linked_to_previous = False
+                    sec.footer.is_linked_to_previous = False
+
+                f_name = font_name or "Times New Roman"
+                f_size = font_size_pt or 12.0
+
+                populate_header_footer_container(
+                    sec.first_page_footer,
+                    include_page_number=True,
+                    alignment="center",
+                    font_name=f_name,
+                    font_size_pt=f_size,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+                populate_header_footer_container(sec.first_page_header)
+                populate_header_footer_container(
+                    sec.header,
+                    text=text,
+                    include_page_number=True,
+                    alignment="right",
+                    font_name=f_name,
+                    font_size_pt=f_size,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+                populate_header_footer_container(sec.footer)
+
+            elif preset_clean == "skripsi_preliminary":
+                sec.different_first_page_header_footer = False
+                if s_idx > 0 and is_linked_to_previous is None:
+                    sec.header.is_linked_to_previous = False
+                    sec.footer.is_linked_to_previous = False
+
+                f_name = font_name or "Times New Roman"
+                f_size = font_size_pt or 12.0
+
+                populate_header_footer_container(sec.header)
+                populate_header_footer_container(
+                    sec.footer,
+                    include_page_number=True,
+                    alignment="center",
+                    font_name=f_name,
+                    font_size_pt=f_size,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+
+            elif preset_clean == "page_number_bottom_center":
+                populate_header_footer_container(
+                    sec.footer,
+                    text=text,
+                    include_page_number=True,
+                    include_total_pages=include_total_pages,
+                    alignment="center",
+                    font_name=font_name,
+                    font_size_pt=font_size_pt,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+            elif preset_clean == "page_number_top_right":
+                populate_header_footer_container(
+                    sec.header,
+                    text=text,
+                    include_page_number=True,
+                    include_total_pages=include_total_pages,
+                    alignment="right",
+                    font_name=font_name,
+                    font_size_pt=font_size_pt,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+            elif preset_clean == "page_number_bottom_right":
+                populate_header_footer_container(
+                    sec.footer,
+                    text=text,
+                    include_page_number=True,
+                    include_total_pages=include_total_pages,
+                    alignment="right",
+                    font_name=font_name,
+                    font_size_pt=font_size_pt,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+            elif preset_clean in ("clear", "clear_all"):
+                populate_header_footer_container(sec.header)
+                populate_header_footer_container(sec.footer)
+                populate_header_footer_container(sec.first_page_header)
+                populate_header_footer_container(sec.first_page_footer)
+            else:
+                tgt_clean = target.lower().strip()
+                hf_type = header_footer_type.lower().strip()
+
+                if tgt_clean == "header":
+                    if hf_type == "first_page":
+                        sec.different_first_page_header_footer = True
+                        container = sec.first_page_header
+                    elif hf_type == "even_page":
+                        container = sec.even_page_header
+                    else:
+                        container = sec.header
+                else:
+                    if hf_type == "first_page":
+                        sec.different_first_page_header_footer = True
+                        container = sec.first_page_footer
+                    elif hf_type == "even_page":
+                        container = sec.even_page_footer
+                    else:
+                        container = sec.footer
+
+                populate_header_footer_container(
+                    container,
+                    text=text,
+                    include_page_number=include_page_number,
+                    include_total_pages=include_total_pages,
+                    page_number_format_text=page_number_format_text,
+                    alignment=alignment,
+                    font_name=font_name,
+                    font_size_pt=font_size_pt,
+                    color=color,
+                    bold=bold,
+                    italic=italic,
+                )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        sec_desc = f"section {section_index}" if section_index is not None else f"seluruh ({len(target_sections)}) section"
+        mode_desc = f"preset '{preset}'" if preset else f"{target} ({header_footer_type})"
+        return f"Berhasil mengatur Header/Footer ({mode_desc}) pada {sec_desc} di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur Header/Footer pada {file_path}: {e}"
+
+
+@mcp.tool()
+def get_header_footer_docx(file_path: str, section_index: int | None = None) -> str:
+    """Membaca isi teks, nomor halaman (field PAGE/NUMPAGES), status link, dan konfigurasi Header dan Footer untuk seluruh section dokumen .docx."""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if section_index is not None:
+            if section_index < 0 or section_index >= len(doc.sections):
+                return f"Error: Indeks section {section_index} tidak ditemukan. Total section: {len(doc.sections)}."
+            target_sections = [(section_index, doc.sections[section_index])]
+        else:
+            target_sections = list(enumerate(doc.sections))
+
+        def format_container_info(container, label: str):
+            items = []
+            for p in container.paragraphs:
+                txt = p.text.strip()
+                flds = [el.get(qn("w:instr")) for el in p._p.xpath(".//w:fldSimple")]
+                fld_str = " ".join([f"[{fi}]" for fi in flds]) if flds else ""
+                full = f"{txt} {fld_str}".strip()
+                if full:
+                    items.append(full)
+            content_desc = " | ".join(items) if items else "(kosong)"
+            align_desc = container.paragraphs[0].alignment if container.paragraphs else None
+            align_str = f", Align={align_desc.name}" if align_desc else ""
+            link_str = "Linked" if container.is_linked_to_previous else "Unlinked"
+            return f"{label}: {content_desc} ({link_str}{align_str})"
+
+        lines = [f"Informasi Header & Footer Dokumen {path.name}:"]
+        for idx, sec in target_sections:
+            lines.append(f"\n[Section {idx}]")
+            lines.append(f"- Different First Page: {'Ya' if sec.different_first_page_header_footer else 'Tidak'}")
+            lines.append(f"- {format_container_info(sec.header, 'Header Normal')}")
+            if sec.different_first_page_header_footer:
+                lines.append(f"- {format_container_info(sec.first_page_header, 'Header Hal. Pertama')}")
+            lines.append(f"- {format_container_info(sec.footer, 'Footer Normal')}")
+            if sec.different_first_page_header_footer:
+                lines.append(f"- {format_container_info(sec.first_page_footer, 'Footer Hal. Pertama')}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: Gagal membaca Header/Footer di {file_path}: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()
 

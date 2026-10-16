@@ -25,6 +25,7 @@ from docx_mcp.server import (
     extract_images_docx,
     format_paragraph_docx,
     format_text_docx,
+    get_header_footer_docx,
     get_images_info_docx,
     get_page_setup_docx,
     merge_cells_docx,
@@ -35,6 +36,7 @@ from docx_mcp.server import (
     set_cell_margins_docx,
     set_cell_shading_docx,
     set_cell_text_direction_docx,
+    set_header_footer_docx,
     set_page_setup_docx,
     set_table_alignment_docx,
     set_table_borders_docx,
@@ -809,6 +811,76 @@ class TestTableTools(unittest.TestCase):
         self.assertEqual(len(tabs), 2)
         r_texts = [r.text for r in p_num.runs]
         self.assertIn("(2.1)", "".join(r_texts))
+
+    def test_set_header_footer_skripsi_chapter_preset(self):
+        doc = Document()
+        doc.add_paragraph("Bab I Pendahuluan")
+        doc.save(self.file_path)
+
+        res = set_header_footer_docx(
+            self.file_path,
+            preset="skripsi_chapter",
+            text="BAB I PENDAHULUAN",
+            font_name="Times New Roman",
+            font_size_pt=12.0,
+        )
+        self.assertIn("Berhasil mengatur Header/Footer (preset 'skripsi_chapter')", res)
+
+        doc_check = Document(self.file_path)
+        sec = doc_check.sections[0]
+        self.assertTrue(sec.different_first_page_header_footer)
+
+        # First page footer has center page number
+        f_p = sec.first_page_footer.paragraphs[0]
+        self.assertEqual(f_p.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertTrue(bool(f_p._p.xpath('.//w:fldSimple[@w:instr="PAGE"]')))
+
+        # Normal header has right page number
+        h_p = sec.header.paragraphs[0]
+        self.assertEqual(h_p.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+        self.assertTrue(bool(h_p._p.xpath('.//w:fldSimple[@w:instr="PAGE"]')))
+        self.assertIn("BAB I PENDAHULUAN", [r.text for r in h_p.runs])
+
+        # Test inspection tool
+        info = get_header_footer_docx(self.file_path)
+        self.assertIn("Different First Page: Ya", info)
+        self.assertIn("[PAGE]", info)
+
+    def test_set_header_footer_custom_format_and_unlink(self):
+        doc = Document()
+        doc.add_paragraph("Section 1")
+        doc.add_section()
+        doc.add_paragraph("Section 2")
+        doc.save(self.file_path)
+
+        # Format custom dengan template Halaman {page} dari {pages}
+        res = set_header_footer_docx(
+            self.file_path,
+            target="footer",
+            section_index=1,
+            is_linked_to_previous=False,
+            page_number_format_text="Halaman {page} dari {pages}",
+            alignment="center",
+            font_name="Arial",
+            font_size_pt=10.0,
+            color="#0000FF",
+        )
+        self.assertIn("Berhasil mengatur Header/Footer", res)
+
+        doc_check = Document(self.file_path)
+        sec2 = doc_check.sections[1]
+        self.assertFalse(sec2.footer.is_linked_to_previous)
+
+        p = sec2.footer.paragraphs[0]
+        fld_page = p._p.xpath('.//w:fldSimple[@w:instr="PAGE"]')
+        fld_numpages = p._p.xpath('.//w:fldSimple[@w:instr="NUMPAGES"]')
+        self.assertTrue(bool(fld_page))
+        self.assertTrue(bool(fld_numpages))
+
+        info = get_header_footer_docx(self.file_path, section_index=1)
+        self.assertIn("[PAGE]", info)
+        self.assertIn("[NUMPAGES]", info)
+        self.assertIn("Unlinked", info)
 
 
 if __name__ == "__main__":
