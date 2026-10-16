@@ -35,6 +35,9 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`resize_picture_docx`**: Resizes an existing image in the document by its picture index using Inches or Cm.
 - **`delete_picture_docx`**: Deletes an image from the document by its picture index.
 - **`extract_images_docx`**: Extracts all embedded image files from the document and saves them to an output directory.
+- **`set_page_setup_docx`**: Configures paper size (`A4`, `Letter`, `Legal`, `Folio`/`F4`, `A3`, `A5`, `Executive` or custom cm/inches), orientation (`Portrait`/`Landscape`), margins (preset: `normal`, `narrow`, `skripsi` 4-4-3-3, or custom cm/inches), gutter, and header/footer distance.
+- **`get_page_setup_docx`**: Inspects page dimensions, orientation, margins, and gutter for all sections in the document.
+- **`add_section_docx`**: Appends a new section (e.g. for switching to landscape or different paper size / margins) with section start types (`new_page`, `continuous`, etc.).
 
 ## Requirements
 

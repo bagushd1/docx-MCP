@@ -4,10 +4,12 @@ import unittest
 from pathlib import Path
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE
+from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 from docx_mcp.server import (
     add_column_docx,
     add_picture_docx,
     add_row_docx,
+    add_section_docx,
     add_styled_paragraph_docx,
     clear_docx,
     create_table_docx,
@@ -20,6 +22,7 @@ from docx_mcp.server import (
     format_paragraph_docx,
     format_text_docx,
     get_images_info_docx,
+    get_page_setup_docx,
     merge_cells_docx,
     read_docx,
     resize_picture_docx,
@@ -28,6 +31,7 @@ from docx_mcp.server import (
     set_cell_margins_docx,
     set_cell_shading_docx,
     set_cell_text_direction_docx,
+    set_page_setup_docx,
     set_table_alignment_docx,
     set_table_borders_docx,
     set_table_pagination_docx,
@@ -505,9 +509,71 @@ class TestTableTools(unittest.TestCase):
         files = list(out_dir.glob("*"))
         self.assertEqual(len(files), 1)
 
+    def test_set_page_setup_and_read(self):
+        res = set_page_setup_docx(
+            self.file_path,
+            paper_size="a4",
+            orientation="portrait",
+            margin_preset="skripsi",
+            gutter_cm=0.5,
+        )
+        self.assertIn("Berhasil memperbarui pengaturan halaman", res)
+
+        info = get_page_setup_docx(self.file_path)
+        self.assertIn("A4", info)
+        self.assertIn("Portrait", info)
+        self.assertIn("Atas=4.00cm", info)
+        self.assertIn("Gutter: 0.50 cm", info)
+
+        doc = Document(self.file_path)
+        sec = doc.sections[0]
+        self.assertAlmostEqual(sec.top_margin / 360000.0, 4.0, places=1)
+        self.assertAlmostEqual(sec.left_margin / 360000.0, 4.0, places=1)
+        self.assertAlmostEqual(sec.bottom_margin / 360000.0, 3.0, places=1)
+        self.assertAlmostEqual(sec.right_margin / 360000.0, 3.0, places=1)
+        self.assertAlmostEqual(sec.page_width / 360000.0, 21.0, places=1)
+        self.assertAlmostEqual(sec.page_height / 360000.0, 29.7, places=1)
+
+    def test_set_page_setup_landscape_and_custom_margins(self):
+        res = set_page_setup_docx(
+            self.file_path,
+            paper_size="letter",
+            orientation="landscape",
+            top_margin_inches=1.0,
+            bottom_margin_inches=1.0,
+            left_margin_inches=1.5,
+            right_margin_inches=1.5,
+        )
+        self.assertIn("Berhasil memperbarui pengaturan halaman", res)
+
+        doc = Document(self.file_path)
+        sec = doc.sections[0]
+        self.assertEqual(sec.orientation, WD_ORIENTATION.LANDSCAPE)
+        self.assertAlmostEqual(sec.page_width / 914400.0, 11.0, places=1)
+        self.assertAlmostEqual(sec.page_height / 914400.0, 8.5, places=1)
+        self.assertAlmostEqual(sec.left_margin / 914400.0, 1.5, places=1)
+
+    def test_add_section_and_multi_section(self):
+        set_page_setup_docx(self.file_path, paper_size="a4", orientation="portrait")
+        res = add_section_docx(
+            self.file_path,
+            start_type="new_page",
+            paper_size="a4",
+            orientation="landscape",
+            margin_preset="narrow",
+        )
+        self.assertIn("Berhasil menambahkan section baru", res)
+
+        doc = Document(self.file_path)
+        self.assertEqual(len(doc.sections), 2)
+        self.assertEqual(doc.sections[0].orientation, WD_ORIENTATION.PORTRAIT)
+        self.assertEqual(doc.sections[1].orientation, WD_ORIENTATION.LANDSCAPE)
+        self.assertAlmostEqual(doc.sections[1].top_margin / 360000.0, 1.27, places=1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

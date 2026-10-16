@@ -10,6 +10,7 @@ from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE
+from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 
 mcp = MCPServer("DocxEditor")
 
@@ -1766,7 +1767,319 @@ def extract_images_docx(file_path: str, output_dir: str) -> str:
         return f"Error: Gagal mengekstrak gambar dari {file_path}: {e}"
 
 
+PAPER_SIZES = {
+    "a4": (21.0, 29.7),
+    "a3": (29.7, 42.0),
+    "a5": (14.8, 21.0),
+    "letter": (21.59, 27.94),
+    "legal": (21.59, 35.56),
+    "folio": (21.5, 33.0),
+    "f4": (21.5, 33.0),
+    "executive": (18.415, 26.67),
+}
+
+MARGIN_PRESETS = {
+    "normal": (2.54, 2.54, 2.54, 2.54),
+    "narrow": (1.27, 1.27, 1.27, 1.27),
+    "moderate": (2.54, 2.54, 1.905, 1.905),
+    "wide": (2.54, 2.54, 5.08, 5.08),
+    "skripsi": (4.0, 3.0, 4.0, 3.0),
+}
+
+
+def apply_section_formatting(
+    sec,
+    paper_size: str = "",
+    page_width_inches: float | None = None,
+    page_height_inches: float | None = None,
+    page_width_cm: float | None = None,
+    page_height_cm: float | None = None,
+    orientation: str = "",
+    margin_preset: str = "",
+    top_margin_inches: float | None = None,
+    bottom_margin_inches: float | None = None,
+    left_margin_inches: float | None = None,
+    right_margin_inches: float | None = None,
+    top_margin_cm: float | None = None,
+    bottom_margin_cm: float | None = None,
+    left_margin_cm: float | None = None,
+    right_margin_cm: float | None = None,
+    gutter_inches: float | None = None,
+    gutter_cm: float | None = None,
+    header_distance_inches: float | None = None,
+    header_distance_cm: float | None = None,
+    footer_distance_inches: float | None = None,
+    footer_distance_cm: float | None = None,
+    different_first_page_header_footer: bool | None = None,
+):
+    target_orient = orientation.strip().lower() if orientation else None
+
+    if paper_size:
+        clean_ps = paper_size.strip().lower()
+        if clean_ps in PAPER_SIZES:
+            pw, ph = PAPER_SIZES[clean_ps]
+            is_land = (target_orient == "landscape") or (target_orient is None and sec.orientation == WD_ORIENTATION.LANDSCAPE)
+            if is_land:
+                sec.page_width = Cm(max(pw, ph))
+                sec.page_height = Cm(min(pw, ph))
+                sec.orientation = WD_ORIENTATION.LANDSCAPE
+            else:
+                sec.page_width = Cm(min(pw, ph))
+                sec.page_height = Cm(max(pw, ph))
+                sec.orientation = WD_ORIENTATION.PORTRAIT
+    elif page_width_inches is not None and page_height_inches is not None:
+        sec.page_width = Inches(page_width_inches)
+        sec.page_height = Inches(page_height_inches)
+    elif page_width_cm is not None and page_height_cm is not None:
+        sec.page_width = Cm(page_width_cm)
+        sec.page_height = Cm(page_height_cm)
+
+    if target_orient and not paper_size:
+        if target_orient == "landscape":
+            sec.orientation = WD_ORIENTATION.LANDSCAPE
+            if sec.page_width < sec.page_height:
+                sec.page_width, sec.page_height = sec.page_height, sec.page_width
+        elif target_orient == "portrait":
+            sec.orientation = WD_ORIENTATION.PORTRAIT
+            if sec.page_width > sec.page_height:
+                sec.page_width, sec.page_height = sec.page_height, sec.page_width
+
+    if margin_preset:
+        clean_mp = margin_preset.strip().lower()
+        if clean_mp in MARGIN_PRESETS:
+            top_c, bot_c, left_c, right_c = MARGIN_PRESETS[clean_mp]
+            sec.top_margin = Cm(top_c)
+            sec.bottom_margin = Cm(bot_c)
+            sec.left_margin = Cm(left_c)
+            sec.right_margin = Cm(right_c)
+
+    if top_margin_inches is not None:
+        sec.top_margin = Inches(top_margin_inches)
+    elif top_margin_cm is not None:
+        sec.top_margin = Cm(top_margin_cm)
+
+    if bottom_margin_inches is not None:
+        sec.bottom_margin = Inches(bottom_margin_inches)
+    elif bottom_margin_cm is not None:
+        sec.bottom_margin = Cm(bottom_margin_cm)
+
+    if left_margin_inches is not None:
+        sec.left_margin = Inches(left_margin_inches)
+    elif left_margin_cm is not None:
+        sec.left_margin = Cm(left_margin_cm)
+
+    if right_margin_inches is not None:
+        sec.right_margin = Inches(right_margin_inches)
+    elif right_margin_cm is not None:
+        sec.right_margin = Cm(right_margin_cm)
+
+    if gutter_inches is not None:
+        sec.gutter = Inches(gutter_inches)
+    elif gutter_cm is not None:
+        sec.gutter = Cm(gutter_cm)
+
+    if header_distance_inches is not None:
+        sec.header_distance = Inches(header_distance_inches)
+    elif header_distance_cm is not None:
+        sec.header_distance = Cm(header_distance_cm)
+
+    if footer_distance_inches is not None:
+        sec.footer_distance = Inches(footer_distance_inches)
+    elif footer_distance_cm is not None:
+        sec.footer_distance = Cm(footer_distance_cm)
+
+    if different_first_page_header_footer is not None:
+        sec.different_first_page_header_footer = different_first_page_header_footer
+
+
+@mcp.tool()
+def get_page_setup_docx(file_path: str) -> str:
+    """Membaca informasi ukuran kertas, orientasi, margin (cm/inci), gutter, dan header/footer distance untuk seluruh section dokumen"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+        lines = [f"Pengaturan Halaman Dokumen {path.name} (Total {len(doc.sections)} section):"]
+
+        for idx, sec in enumerate(doc.sections):
+            w_cm = sec.page_width / 360000.0
+            h_cm = sec.page_height / 360000.0
+            w_in = sec.page_width / 914400.0
+            h_in = sec.page_height / 914400.0
+            orient = "Landscape" if sec.orientation == WD_ORIENTATION.LANDSCAPE else "Portrait"
+
+            detected_size = "Kustom"
+            for name, (cw, ch) in PAPER_SIZES.items():
+                min_dim = min(cw, ch)
+                max_dim = max(cw, ch)
+                cur_min = min(w_cm, h_cm)
+                cur_max = max(w_cm, h_cm)
+                if abs(min_dim - cur_min) < 0.1 and abs(max_dim - cur_max) < 0.1:
+                    detected_size = name.upper()
+                    break
+
+            top_cm = sec.top_margin / 360000.0
+            bot_cm = sec.bottom_margin / 360000.0
+            left_cm = sec.left_margin / 360000.0
+            right_cm = sec.right_margin / 360000.0
+
+            lines.append(f"\n[Section {idx}]")
+            lines.append(f"- Ukuran Kertas: {detected_size} ({w_cm:.2f} x {h_cm:.2f} cm / {w_in:.2f} x {h_in:.2f} in)")
+            lines.append(f"- Orientasi: {orient}")
+            lines.append(f"- Margin: Atas={top_cm:.2f}cm, Bawah={bot_cm:.2f}cm, Kiri={left_cm:.2f}cm, Kanan={right_cm:.2f}cm")
+            if sec.gutter:
+                lines.append(f"- Gutter: {sec.gutter / 360000.0:.2f} cm")
+            lines.append(f"- Beda Halaman Pertama (Cover): {'Ya' if sec.different_first_page_header_footer else 'Tidak'}")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Error: Gagal membaca pengaturan halaman di {file_path}: {e}"
+
+
+@mcp.tool()
+def set_page_setup_docx(
+    file_path: str,
+    section_index: int | None = None,
+    paper_size: str = "",
+    page_width_inches: float | None = None,
+    page_height_inches: float | None = None,
+    page_width_cm: float | None = None,
+    page_height_cm: float | None = None,
+    orientation: str = "",
+    margin_preset: str = "",
+    top_margin_inches: float | None = None,
+    bottom_margin_inches: float | None = None,
+    left_margin_inches: float | None = None,
+    right_margin_inches: float | None = None,
+    top_margin_cm: float | None = None,
+    bottom_margin_cm: float | None = None,
+    left_margin_cm: float | None = None,
+    right_margin_cm: float | None = None,
+    gutter_inches: float | None = None,
+    gutter_cm: float | None = None,
+    header_distance_inches: float | None = None,
+    header_distance_cm: float | None = None,
+    footer_distance_inches: float | None = None,
+    footer_distance_cm: float | None = None,
+    different_first_page_header_footer: bool | None = None,
+) -> str:
+    """Mengatur ukuran kertas (A4, Letter, F4/Folio, Legal, dll), orientasi (Portrait/Landscape), margin (cm/inci/preset: normal, narrow, skripsi), gutter, dan jarak header/footer"""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        target_sections = []
+        if section_index is not None:
+            if section_index < 0 or section_index >= len(doc.sections):
+                return f"Error: Indeks section {section_index} tidak ditemukan. Total section: {len(doc.sections)}."
+            target_sections.append(doc.sections[section_index])
+            target_desc = f"section {section_index}"
+        else:
+            target_sections.extend(doc.sections)
+            target_desc = f"seluruh section ({len(doc.sections)} section)"
+
+        for sec in target_sections:
+            apply_section_formatting(
+                sec=sec,
+                paper_size=paper_size,
+                page_width_inches=page_width_inches,
+                page_height_inches=page_height_inches,
+                page_width_cm=page_width_cm,
+                page_height_cm=page_height_cm,
+                orientation=orientation,
+                margin_preset=margin_preset,
+                top_margin_inches=top_margin_inches,
+                bottom_margin_inches=bottom_margin_inches,
+                left_margin_inches=left_margin_inches,
+                right_margin_inches=right_margin_inches,
+                top_margin_cm=top_margin_cm,
+                bottom_margin_cm=bottom_margin_cm,
+                left_margin_cm=left_margin_cm,
+                right_margin_cm=right_margin_cm,
+                gutter_inches=gutter_inches,
+                gutter_cm=gutter_cm,
+                header_distance_inches=header_distance_inches,
+                header_distance_cm=header_distance_cm,
+                footer_distance_inches=footer_distance_inches,
+                footer_distance_cm=footer_distance_cm,
+                different_first_page_header_footer=different_first_page_header_footer,
+            )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        return f"Berhasil memperbarui pengaturan halaman pada {target_desc} di {path}."
+    except Exception as e:
+        return f"Error: Gagal mengatur halaman di {file_path}: {e}"
+
+
+@mcp.tool()
+def add_section_docx(
+    file_path: str,
+    start_type: str = "new_page",
+    paper_size: str = "",
+    page_width_inches: float | None = None,
+    page_height_inches: float | None = None,
+    page_width_cm: float | None = None,
+    page_height_cm: float | None = None,
+    orientation: str = "",
+    margin_preset: str = "",
+    top_margin_inches: float | None = None,
+    bottom_margin_inches: float | None = None,
+    left_margin_inches: float | None = None,
+    right_margin_inches: float | None = None,
+    top_margin_cm: float | None = None,
+    bottom_margin_cm: float | None = None,
+    left_margin_cm: float | None = None,
+    right_margin_cm: float | None = None,
+    gutter_inches: float | None = None,
+    gutter_cm: float | None = None,
+    different_first_page_header_footer: bool | None = None,
+) -> str:
+    """Menambahkan section baru ke dokumen Word (misal halaman baru dengan orientasi Landscape atau ukuran kertas berbeda)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        start_map = {
+            "new_page": WD_SECTION_START.NEW_PAGE,
+            "continuous": WD_SECTION_START.CONTINUOUS,
+            "even_page": WD_SECTION_START.EVEN_PAGE,
+            "odd_page": WD_SECTION_START.ODD_PAGE,
+        }
+        st_val = start_map.get(start_type.strip().lower(), WD_SECTION_START.NEW_PAGE)
+
+        new_sec = doc.add_section(st_val)
+        apply_section_formatting(
+            sec=new_sec,
+            paper_size=paper_size,
+            page_width_inches=page_width_inches,
+            page_height_inches=page_height_inches,
+            page_width_cm=page_width_cm,
+            page_height_cm=page_height_cm,
+            orientation=orientation,
+            margin_preset=margin_preset,
+            top_margin_inches=top_margin_inches,
+            bottom_margin_inches=bottom_margin_inches,
+            left_margin_inches=left_margin_inches,
+            right_margin_inches=right_margin_inches,
+            top_margin_cm=top_margin_cm,
+            bottom_margin_cm=bottom_margin_cm,
+            left_margin_cm=left_margin_cm,
+            right_margin_cm=right_margin_cm,
+            gutter_inches=gutter_inches,
+            gutter_cm=gutter_cm,
+            different_first_page_header_footer=different_first_page_header_footer,
+        )
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+        sec_idx = len(doc.sections) - 1
+        return f"Berhasil menambahkan section baru (section {sec_idx}, tipe={start_type}) di {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan section ke {file_path}: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()
+
 
 
