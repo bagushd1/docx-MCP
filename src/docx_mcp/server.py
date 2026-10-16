@@ -9,7 +9,7 @@ from docx.shared import Inches, Pt, RGBColor, Cm, Mm, Length
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK, WD_TAB_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_UNDERLINE, WD_BREAK, WD_TAB_ALIGNMENT, WD_TAB_LEADER
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 import latex2mathml.converter
 import mathml2omml
@@ -100,13 +100,23 @@ def read_docx(file_path: str) -> str:
 
         bdr_desc = f" [Garis Pembatas: {bdr_val}]" if (bdr_val and bdr_val != "none") else ""
 
+        if not p_text:
+            field_text = "".join([t.text or "" for t in p._p.xpath(".//w:t")]).strip()
+            if field_text:
+                p_text = field_text
+
+        toc_fld = p._p.xpath('.//w:fldSimple[contains(@w:instr, "TOC")] | .//w:instrText[contains(text(), "TOC")]')
+        toc_desc = " [TOC Field]" if toc_fld else ""
+
         if p_text:
-            combined = f"{p.text}{bdr_desc}"
+            combined = f"{p_text}{bdr_desc}{toc_desc}"
             if math_desc:
                 combined += f" {math_desc}"
             content.append(f"[P{i}] {combined}")
         elif math_desc:
             content.append(f"[P{i}] {math_desc}{bdr_desc}")
+        elif toc_desc:
+            content.append(f"[P{i}] {toc_desc.strip()}")
         else:
             has_page_br = bool(p._p.xpath(".//w:br[@w:type='page' or not(@w:type)]"))
             has_col_br = bool(p._p.xpath(".//w:br[@w:type='column']"))
@@ -2928,6 +2938,216 @@ def get_header_footer_docx(file_path: str, section_index: int | None = None) -> 
         return "\n".join(lines)
     except Exception as e:
         return f"Error: Gagal membaca Header/Footer di {file_path}: {e}"
+
+
+def get_paragraph_heading_level(p) -> int | None:
+    style_name = (p.style.name or "").strip().lower() if p.style and p.style.name else ""
+    for prefix in ("heading ", "judul "):
+        if style_name.startswith(prefix):
+            suffix = style_name[len(prefix):].strip()
+            if suffix.isdigit():
+                return int(suffix)
+    outline_el = p._p.xpath("./w:pPr/w:outlineLvl")
+    if outline_el:
+        val = outline_el[0].get(qn("w:val"))
+        if val and val.isdigit():
+            return int(val) + 1
+    return None
+
+
+@mcp.tool()
+def add_table_of_contents_docx(
+    file_path: str,
+    heading: str = "DAFTAR ISI",
+    toc_type: str = "auto",
+    entries: list[dict] | None = None,
+    max_level: int = 3,
+    paragraph_index: int | None = None,
+    insert_before: bool = False,
+    page_break_after: bool = True,
+    page_break_before: bool = False,
+    font_name: str | None = None,
+    font_size_pt: float | None = None,
+    heading_font_size_pt: float | None = None,
+    line_spacing: float = 1.5,
+    space_after_pt: float = 0.0,
+    tab_leader: str = "dots",
+    level_indent_cm: float = 0.5,
+    bold_level_1: bool = True,
+    update_fields_on_open: bool = True,
+) -> str:
+    """Menambahkan Daftar Isi (Table of Contents / TOC) pada dokumen .docx. Mendukung TOC dinamis Word (field fldSimple/complex F9), entri manual / terhitung dengan dot leaders (... nomor halaman), auto-deteksi heading dokumen, indentasi hierarki level, kustomisasi judul ('DAFTAR ISI', 'DAFTAR TABEL', 'DAFTAR GAMBAR'), dan page break."""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+
+        if paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            target = (
+                doc.paragraphs[paragraph_index]
+                if insert_before
+                else (doc.paragraphs[paragraph_index + 1] if paragraph_index + 1 < len(doc.paragraphs) else None)
+            )
+        else:
+            target = None
+
+        def create_p():
+            if target is not None:
+                return target.insert_paragraph_before()
+            return doc.add_paragraph()
+
+        sec = doc.sections[0] if doc.sections else None
+        if sec:
+            try:
+                usable_width = Length(sec.page_width - sec.left_margin - sec.right_margin)
+                if usable_width <= 0:
+                    usable_width = Inches(6.0)
+            except Exception:
+                usable_width = Inches(6.0)
+        else:
+            usable_width = Inches(6.0)
+
+        tab_leader_map = {
+            "dots": WD_TAB_LEADER.DOTS,
+            "dashes": WD_TAB_LEADER.DASHES,
+            "lines": WD_TAB_LEADER.LINES,
+            "spaces": WD_TAB_LEADER.SPACES,
+        }
+        leader_val = tab_leader_map.get(tab_leader.lower(), WD_TAB_LEADER.DOTS)
+
+        # Extract or prepare entries BEFORE inserting any new paragraphs
+        active_entries = []
+        if entries:
+            for item in entries:
+                if isinstance(item, dict):
+                    t = str(item.get("title") or item.get("text") or "").strip()
+                    p_no = str(item.get("page") or item.get("page_number") or item.get("page_no") or "").strip()
+                    lvl = int(item.get("level") or 1)
+                    bld = item.get("bold")
+                else:
+                    t = str(item).strip()
+                    p_no = ""
+                    lvl = 1
+                    bld = None
+                if t:
+                    active_entries.append({"title": t, "page": p_no, "level": lvl, "bold": bld})
+        elif toc_type.lower().strip() in ("auto", "static", "both"):
+            for p_item in doc.paragraphs:
+                lvl = get_paragraph_heading_level(p_item)
+                if lvl is not None and 1 <= lvl <= max_level:
+                    t = p_item.text.strip()
+                    if t and t.upper() not in ("DAFTAR ISI", "DAFTAR TABEL", "DAFTAR GAMBAR", "TABLE OF CONTENTS"):
+                        active_entries.append({"title": t, "page": "", "level": lvl, "bold": None})
+
+        # 1. Page break before if requested
+        if page_break_before:
+            pb_before = create_p()
+            pb_before.add_run().add_break(WD_BREAK.PAGE)
+
+        # 2. Heading paragraph
+        if heading and heading.strip():
+            p_head = create_p()
+            p_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p_head.paragraph_format.space_after = Pt(12.0)
+            p_head.paragraph_format.line_spacing = line_spacing
+            r_head = p_head.add_run(heading.strip())
+            r_head.bold = True
+            if font_name:
+                r_head.font.name = font_name
+            h_size = heading_font_size_pt or (font_size_pt + 2.0 if font_size_pt else 14.0)
+            r_head.font.size = Pt(h_size)
+
+        toc_type_clean = toc_type.lower().strip()
+
+        # 3. Insert TOC content
+        if toc_type_clean == "dynamic" or (not active_entries and toc_type_clean == "auto"):
+            p_dyn = create_p()
+            p_dyn.paragraph_format.line_spacing = line_spacing
+            p_dyn.paragraph_format.space_after = Pt(space_after_pt)
+            instr_attr = f'TOC \\o &quot;1-{max_level}&quot; \\h \\z \\u'
+            fld_xml = parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr="{instr_attr}">'
+                f'<w:r><w:rPr><w:i/></w:rPr><w:t>[Daftar Isi Otomatis - Tekan F9 atau klik kanan lalu Update Field untuk memperbarui]</w:t></w:r>'
+                f'</w:fldSimple>'
+            )
+            p_dyn._p.append(fld_xml)
+        else:
+            # Render entries
+            for idx, item in enumerate(active_entries):
+                title = item["title"]
+                page = item["page"]
+                level = max(1, min(item["level"], max_level))
+                is_bold = item["bold"] if item["bold"] is not None else (bold_level_1 and level == 1)
+
+                p = create_p()
+                p.paragraph_format.line_spacing = line_spacing
+                p.paragraph_format.space_after = Pt(space_after_pt)
+                if level > 1 and level_indent_cm > 0:
+                    p.paragraph_format.left_indent = Cm((level - 1) * level_indent_cm)
+
+                p.paragraph_format.tab_stops.add_tab_stop(usable_width, WD_TAB_ALIGNMENT.RIGHT, leader_val)
+
+                if toc_type_clean in ("auto", "complex") and idx == 0:
+                    instr = f'TOC \\o "1-{max_level}" \\h \\z \\u'
+                    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="begin"/></w:r>'))
+                    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:instrText xml:space="preserve"> {instr} </w:instrText></w:r>'))
+                    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="separate"/></w:r>'))
+
+                r_title = p.add_run(title)
+                if font_name:
+                    r_title.font.name = font_name
+                if font_size_pt:
+                    r_title.font.size = Pt(font_size_pt)
+                if is_bold:
+                    r_title.bold = True
+
+                r_tab = p.add_run("\t")
+                if font_name:
+                    r_tab.font.name = font_name
+
+                if page:
+                    r_page = p.add_run(page)
+                    if font_name:
+                        r_page.font.name = font_name
+                    if font_size_pt:
+                        r_page.font.size = Pt(font_size_pt)
+                    if is_bold:
+                        r_page.bold = True
+
+                if toc_type_clean in ("auto", "complex") and idx == len(active_entries) - 1:
+                    p._p.append(parse_xml(f'<w:r {nsdecls("w")}><w:fldChar w:fldCharType="end"/></w:r>'))
+
+            if toc_type_clean == "both":
+                p_dyn = create_p()
+                p_dyn.paragraph_format.line_spacing = line_spacing
+                p_dyn.paragraph_format.space_after = Pt(space_after_pt)
+                instr_attr = f'TOC \\o &quot;1-{max_level}&quot; \\h \\z \\u'
+                fld_xml = parse_xml(
+                    f'<w:fldSimple {nsdecls("w")} w:instr="{instr_attr}">'
+                    f'<w:r><w:rPr><w:i/></w:rPr><w:t>[Daftar Isi Otomatis - Tekan F9 atau klik kanan lalu Update Field untuk memperbarui]</w:t></w:r>'
+                    f'</w:fldSimple>'
+                )
+                p_dyn._p.append(fld_xml)
+
+        # 4. Page break after if requested
+        if page_break_after:
+            pb_after = create_p()
+            pb_after.add_run().add_break(WD_BREAK.PAGE)
+
+        # 5. Enable updateFields in settings if dynamic field is present
+        if update_fields_on_open and toc_type_clean in ("auto", "dynamic", "both", "complex"):
+            existing = doc.settings.element.find(qn("w:updateFields"))
+            if existing is None:
+                doc.settings.element.append(parse_xml(r'<w:updateFields %s w:val="true"/>' % nsdecls("w")))
+
+        doc.save(str(path))
+        entri_count = len(active_entries)
+        entri_desc = f"{entri_count} entri" if entri_count > 0 else "field dinamis"
+        head_desc = f"'{heading}'" if heading and heading.strip() else "Table of Contents"
+        return f"Berhasil menambahkan {head_desc} ({entri_desc}, tipe: {toc_type_clean}) pada {path}."
+    except Exception as e:
+        return f"Error: Gagal menambahkan Table of Contents pada {file_path}: {e}"
 
 
 if __name__ == "__main__":

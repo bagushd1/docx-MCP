@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE, WD_TAB_LEADER
 from docx.enum.section import WD_SECTION_START, WD_ORIENTATION
 from docx.oxml.ns import qn
 from docx_mcp.server import (
@@ -44,6 +44,7 @@ from docx_mcp.server import (
     set_table_style_docx,
     set_table_visibility_docx,
     split_table_docx,
+    add_table_of_contents_docx,
 )
 
 
@@ -881,6 +882,131 @@ class TestTableTools(unittest.TestCase):
         self.assertIn("[PAGE]", info)
         self.assertIn("[NUMPAGES]", info)
         self.assertIn("Unlinked", info)
+
+    def test_add_table_of_contents_dynamic(self):
+        doc = Document()
+        doc.add_paragraph("Introductory text")
+        doc.save(self.file_path)
+
+        res = add_table_of_contents_docx(
+            self.file_path,
+            heading="DAFTAR ISI",
+            toc_type="dynamic",
+            max_level=3,
+            page_break_after=True,
+            update_fields_on_open=True,
+        )
+        self.assertIn("Berhasil menambahkan 'DAFTAR ISI'", res)
+
+        doc_check = Document(self.file_path)
+        self.assertEqual(doc_check.paragraphs[1].text, "DAFTAR ISI")
+        # Check dynamic TOC field
+        toc_fld = doc_check.paragraphs[2]._p.xpath('.//w:fldSimple[contains(@w:instr, "TOC")]')
+        self.assertTrue(bool(toc_fld))
+        instr = toc_fld[0].get(qn("w:instr"))
+        self.assertIn(r'TOC \o "1-3" \h \z \u', instr)
+        # Check page break after
+        br_p = doc_check.paragraphs[3]
+        self.assertTrue(bool(br_p._p.xpath('.//w:br[@w:type="page"]')))
+        # Check updateFields setting
+        upd = doc_check.settings.element.find(qn("w:updateFields"))
+        self.assertIsNotNone(upd)
+        self.assertEqual(upd.get(qn("w:val")), "true")
+
+        # Check read_docx recognition
+        read_output = read_docx(self.file_path)
+        self.assertIn("[TOC Field]", read_output)
+
+    def test_add_table_of_contents_manual_entries(self):
+        doc = Document()
+        doc.save(self.file_path)
+
+        entries = [
+            {"title": "LEMBAR PENGESAHAN", "page": "ii", "level": 1},
+            {"title": "KATA PENGANTAR", "page": "iii", "level": 1},
+            {"title": "BAB I PENDAHULUAN", "page": "1", "level": 1},
+            {"title": "1.1 Latar Belakang", "page": "1", "level": 2},
+            {"title": "1.2 Rumusan Masalah", "page": "3", "level": 2},
+        ]
+        res = add_table_of_contents_docx(
+            self.file_path,
+            heading="DAFTAR ISI",
+            toc_type="static",
+            entries=entries,
+            tab_leader="dots",
+            level_indent_cm=0.5,
+            line_spacing=1.5,
+            page_break_after=True,
+        )
+        self.assertIn("5 entri", res)
+
+        doc_check = Document(self.file_path)
+        # Heading
+        self.assertEqual(doc_check.paragraphs[0].text, "DAFTAR ISI")
+        # Entry 1 (level 1 bold)
+        p1 = doc_check.paragraphs[1]
+        self.assertIn("LEMBAR PENGESAHAN", p1.text)
+        self.assertIn("ii", p1.text)
+        self.assertTrue(p1.runs[0].bold)
+        # Tab stops
+        self.assertGreater(len(p1.paragraph_format.tab_stops), 0)
+        ts = p1.paragraph_format.tab_stops[0]
+        self.assertEqual(ts.leader, WD_TAB_LEADER.DOTS)
+        # Entry 4 (level 2 indent)
+        p4 = doc_check.paragraphs[4]
+        self.assertIn("1.1 Latar Belakang", p4.text)
+        self.assertGreater(p4.paragraph_format.left_indent, 0)
+        self.assertFalse(p4.runs[0].bold)
+
+    def test_add_table_of_contents_auto_headings_and_position(self):
+        doc = Document()
+        doc.add_heading("Bab I Pendahuluan", level=1)
+        doc.add_paragraph("Isi bab satu...")
+        doc.add_heading("1.1 Latar Belakang", level=2)
+        doc.add_paragraph("Isi latar belakang...")
+        doc.save(self.file_path)
+
+        # Insert TOC at index 0 (before paragraph 0)
+        res = add_table_of_contents_docx(
+            self.file_path,
+            heading="DAFTAR ISI",
+            toc_type="auto",
+            paragraph_index=0,
+            insert_before=True,
+            page_break_after=True,
+        )
+        self.assertIn("Berhasil menambahkan 'DAFTAR ISI'", res)
+
+        doc_check = Document(self.file_path)
+        # First paragraph must now be DAFTAR ISI
+        self.assertEqual(doc_check.paragraphs[0].text, "DAFTAR ISI")
+        # Auto-extracted entries
+        self.assertIn("Bab I Pendahuluan", doc_check.paragraphs[1].text)
+        self.assertIn("1.1 Latar Belakang", doc_check.paragraphs[2].text)
+        # Original chapter is now pushed down after TOC and page break
+        self.assertTrue(any("Isi bab satu" in p.text for p in doc_check.paragraphs))
+
+    def test_add_table_of_contents_custom_title_and_error(self):
+        doc = Document()
+        doc.add_paragraph("Existing")
+        doc.save(self.file_path)
+
+        # Custom heading e.g. DAFTAR TABEL, without page break after
+        res = add_table_of_contents_docx(
+            self.file_path,
+            heading="DAFTAR TABEL",
+            toc_type="dynamic",
+            page_break_after=False,
+            page_break_before=True,
+        )
+        self.assertIn("Berhasil menambahkan 'DAFTAR TABEL'", res)
+
+        # Error cases
+        err_idx = add_table_of_contents_docx(self.file_path, paragraph_index=999)
+        self.assertIn("Error: Indeks paragraf 999 tidak ditemukan", err_idx)
+
+        err_file = add_table_of_contents_docx("non_existent_file.docx")
+        self.assertIn("Error: Gagal menambahkan Table of Contents", err_file)
 
 
 if __name__ == "__main__":

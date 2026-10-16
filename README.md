@@ -43,6 +43,7 @@ A Model Context Protocol (MCP) server for reading and editing Microsoft Word (`.
 - **`add_equation_docx`**: Inserts native editable Word mathematical equations (OMML) converted from LaTeX or MathML with block/inline display modes, academic right-aligned equation numbering (`equation_number`), placeholder replacement (`placeholder`), font size scaling (`font_size_pt`), paragraph alignment, and table cell support.
 - **`set_header_footer_docx`**: Sets Header and Footer text and physical page number fields (`PAGE` / `NUMPAGES`) with alignment, fonts, colors, section unlinking (`is_linked_to_previous`), different first page, and academic presets (`skripsi_chapter` for bottom-center on first page and top-right on subsequent pages, `skripsi_preliminary` for centered roman numbers).
 - **`get_header_footer_docx`**: Inspects Header and Footer text, field codes (`PAGE`/`NUMPAGES`), alignment, and linkage status across all sections in the document.
+- **`add_table_of_contents_docx`**: Inserts a Table of Contents (Daftar Isi, Daftar Tabel, Daftar Gambar) supporting native Word dynamic fields (`TOC \o "1-3" \h \z \u` with F9 / automatic refresh via `update_fields_on_open`), manual or pre-computed entries with dot leaders (`. . . . . 15`), auto-detection of existing document headings, hierarchical indentation per level (`level_indent_cm`), bold level 1 styling, arbitrary insertion index, and page break integration.
 
 ## Requirements
 
