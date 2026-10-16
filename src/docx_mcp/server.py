@@ -3,7 +3,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from copy import deepcopy
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Inches, Pt, RGBColor, Cm, Mm
 from docx.oxml import parse_xml, OxmlElement
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
@@ -37,6 +37,31 @@ def validate_docx_path(file_path: str, must_exist: bool = False) -> Path:
     return resolved_path
 
 
+def validate_image_path(image_path: str) -> Path:
+    if not image_path or not image_path.strip():
+        raise ValueError("Path gambar tidak boleh kosong.")
+
+    resolved_path = Path(image_path).expanduser().resolve()
+    valid_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+    if resolved_path.suffix.lower() not in valid_exts:
+        raise ValueError(
+            f"Format gambar '{resolved_path.suffix}' tidak didukung. Format yang didukung: {', '.join(sorted(valid_exts))}."
+        )
+
+    allowed_dir = os.environ.get("DOCX_MCP_ALLOWED_DIR")
+    if allowed_dir:
+        allowed_base = Path(allowed_dir).expanduser().resolve()
+        if not resolved_path.is_relative_to(allowed_base):
+            raise PermissionError(
+                f"Akses ditolak: File gambar berada di luar direktori yang diizinkan ({allowed_base})."
+            )
+
+    if not resolved_path.is_file():
+        raise FileNotFoundError(f"File gambar '{resolved_path}' tidak ditemukan.")
+
+    return resolved_path
+
+
 @mcp.tool()
 def read_docx(file_path: str) -> str:
     """Membaca seluruh isi teks dan tabel dari file .docx"""
@@ -57,6 +82,9 @@ def read_docx(file_path: str) -> str:
         for row in table.rows:
             row_text = [cell.text.strip() for cell in row.cells]
             content.append(" | ".join(row_text))
+
+    if doc.inline_shapes:
+        content.append(f"\n--- Total Gambar: {len(doc.inline_shapes)} ---")
 
     return "\n".join(content)
 
@@ -1476,5 +1504,175 @@ def add_styled_paragraph_docx(
         return f"Error: Gagal menambahkan paragraf berformat di {file_path}: {e}"
 
 
+@mcp.tool()
+def add_picture_docx(
+    file_path: str,
+    image_path: str,
+    width_inches: float | None = None,
+    height_inches: float | None = None,
+    width_cm: float | None = None,
+    height_cm: float | None = None,
+    alignment: str = "",
+    caption: str = "",
+    paragraph_index: int | None = None,
+    table_index: int | None = None,
+    row: int | None = None,
+    col: int | None = None,
+) -> str:
+    """Menyisipkan gambar (.png/.jpg/dll) ke dokumen Word dengan pengaturan lebar/tinggi (Inches atau Cm), perataan, keterangan gambar (caption), atau ke dalam sel tabel"""
+    try:
+        path = validate_docx_path(file_path, must_exist=False)
+        img_path = validate_image_path(image_path)
+        doc = Document(str(path)) if path.is_file() else Document()
+
+        width = None
+        if width_inches is not None and width_inches > 0:
+            width = Inches(width_inches)
+        elif width_cm is not None and width_cm > 0:
+            width = Cm(width_cm)
+
+        height = None
+        if height_inches is not None and height_inches > 0:
+            height = Inches(height_inches)
+        elif height_cm is not None and height_cm > 0:
+            height = Cm(height_cm)
+
+        cell = None
+        if table_index is not None:
+            if table_index < 0 or table_index >= len(doc.tables):
+                return f"Error: Indeks tabel {table_index} tidak ditemukan. Total tabel: {len(doc.tables)}."
+            table = doc.tables[table_index]
+            if row is None or col is None:
+                return "Error: Parameter row dan col wajib diisi saat table_index ditentukan."
+            if row < 0 or row >= len(table.rows):
+                return f"Error: Indeks baris {row} tidak valid. Total baris: {len(table.rows)}."
+            if col < 0 or col >= len(table.rows[row].cells):
+                return f"Error: Indeks kolom {col} tidak valid. Total kolom pada baris {row}: {len(table.rows[row].cells)}."
+            cell = table.rows[row].cells[col]
+            p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+            target_desc = f"tabel {table_index} sel [{row}, {col}]"
+        elif paragraph_index is not None:
+            if paragraph_index < 0 or paragraph_index >= len(doc.paragraphs):
+                return f"Error: Indeks paragraf {paragraph_index} tidak ditemukan. Total paragraf: {len(doc.paragraphs)}."
+            p = doc.paragraphs[paragraph_index]
+            target_desc = f"paragraf {paragraph_index}"
+        else:
+            p = doc.add_paragraph()
+            target_desc = "dokumen"
+
+        align_map = {
+            "left": WD_ALIGN_PARAGRAPH.LEFT,
+            "center": WD_ALIGN_PARAGRAPH.CENTER,
+            "right": WD_ALIGN_PARAGRAPH.RIGHT,
+            "justify": WD_ALIGN_PARAGRAPH.JUSTIFY,
+        }
+        if alignment:
+            clean_align = alignment.strip().lower()
+            if clean_align in align_map:
+                p.alignment = align_map[clean_align]
+
+        r = p.add_run()
+        kwargs = {}
+        if width is not None:
+            kwargs["width"] = width
+        if height is not None:
+            kwargs["height"] = height
+        r.add_picture(str(img_path), **kwargs)
+
+        if caption:
+            cap_p = cell.add_paragraph() if cell is not None else doc.add_paragraph()
+            if alignment:
+                clean_align = alignment.strip().lower()
+                if clean_align in align_map:
+                    cap_p.alignment = align_map[clean_align]
+            cap_r = cap_p.add_run(caption)
+            cap_r.font.italic = True
+            cap_r.font.size = Pt(9.5)
+            cap_p.paragraph_format.space_before = Pt(3.0)
+            cap_p.paragraph_format.space_after = Pt(6.0)
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(path))
+
+        dim_desc = []
+        if width_inches:
+            dim_desc.append(f"lebar={width_inches}in")
+        elif width_cm:
+            dim_desc.append(f"lebar={width_cm}cm")
+        if height_inches:
+            dim_desc.append(f"tinggi={height_inches}in")
+        elif height_cm:
+            dim_desc.append(f"tinggi={height_cm}cm")
+        dim_str = f" ({', '.join(dim_desc)})" if dim_desc else " (ukuran asli)"
+
+        return f"Berhasil menyisipkan gambar '{img_path.name}' ke {target_desc}{dim_str} di {path}."
+    except Exception as e:
+        return f"Error: Gagal menyisipkan gambar ke {file_path}: {e}"
+
+
+@mcp.tool()
+def get_images_info_docx(file_path: str) -> str:
+    """Mendapatkan daftar dan informasi dimensi seluruh gambar yang ada di dalam dokumen .docx"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+        shapes = doc.inline_shapes
+        if not shapes:
+            return f"Tidak ada gambar ditemukan pada dokumen {path}."
+
+        info_lines = [f"Total gambar pada {path.name}: {len(shapes)}"]
+        for idx, shape in enumerate(shapes):
+            w_in = shape.width / 914400.0
+            h_in = shape.height / 914400.0
+            w_cm = shape.width / 360000.0
+            h_cm = shape.height / 360000.0
+            info_lines.append(
+                f"[Gambar {idx}] Lebar: {w_in:.2f} in ({w_cm:.2f} cm) | Tinggi: {h_in:.2f} in ({h_cm:.2f} cm)"
+            )
+        return "\n".join(info_lines)
+    except Exception as e:
+        return f"Error: Gagal membaca informasi gambar dari {file_path}: {e}"
+
+
+@mcp.tool()
+def resize_picture_docx(
+    file_path: str,
+    picture_index: int = 0,
+    width_inches: float | None = None,
+    height_inches: float | None = None,
+    width_cm: float | None = None,
+    height_cm: float | None = None,
+) -> str:
+    """Mengubah ukuran (resize) gambar yang sudah ada di dokumen berdasarkan indeks gambar (Inches atau Cm)"""
+    try:
+        path = validate_docx_path(file_path, must_exist=True)
+        doc = Document(str(path))
+        shapes = doc.inline_shapes
+        if not shapes:
+            return f"Error: Dokumen {path} tidak memiliki gambar."
+        if picture_index < 0 or picture_index >= len(shapes):
+            return f"Error: Indeks gambar {picture_index} tidak ditemukan. Total gambar: {len(shapes)}."
+
+        shape = shapes[picture_index]
+
+        if width_inches is not None and width_inches > 0:
+            shape.width = Inches(width_inches)
+        elif width_cm is not None and width_cm > 0:
+            shape.width = Cm(width_cm)
+
+        if height_inches is not None and height_inches > 0:
+            shape.height = Inches(height_inches)
+        elif height_cm is not None and height_cm > 0:
+            shape.height = Cm(height_cm)
+
+        doc.save(str(path))
+        new_w_in = shape.width / 914400.0
+        new_h_in = shape.height / 914400.0
+        return f"Berhasil mengubah ukuran gambar {picture_index} di {path} menjadi lebar={new_w_in:.2f}in, tinggi={new_h_in:.2f}in."
+    except Exception as e:
+        return f"Error: Gagal mengubah ukuran gambar di {file_path}: {e}"
+
+
 if __name__ == "__main__":
     mcp.run()
+

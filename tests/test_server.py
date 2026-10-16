@@ -1,3 +1,4 @@
+import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +6,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_UNDERLINE
 from docx_mcp.server import (
     add_column_docx,
+    add_picture_docx,
     add_row_docx,
     add_styled_paragraph_docx,
     clear_docx,
@@ -15,8 +17,10 @@ from docx_mcp.server import (
     edit_table_docx,
     format_paragraph_docx,
     format_text_docx,
+    get_images_info_docx,
     merge_cells_docx,
     read_docx,
+    resize_picture_docx,
     resize_table_docx,
     set_cell_alignment_docx,
     set_cell_margins_docx,
@@ -398,8 +402,70 @@ class TestTableTools(unittest.TestCase):
         self.assertTrue(p.paragraph_format.page_break_before)
         self.assertTrue(p.paragraph_format.widow_control)
 
+    def test_add_picture_basic_and_read(self):
+        img_path = Path(self.tmp_dir.name) / "test.png"
+        img_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
+
+        res = add_picture_docx(
+            self.file_path,
+            str(img_path),
+            width_inches=2.0,
+            height_inches=1.5,
+            alignment="center",
+            caption="Gambar 1: Sampel Visual",
+        )
+        self.assertIn("Berhasil menyisipkan gambar 'test.png'", res)
+
+        content = read_docx(self.file_path)
+        self.assertIn("Total Gambar: 1", content)
+        self.assertIn("Gambar 1: Sampel Visual", content)
+
+        doc = Document(self.file_path)
+        self.assertEqual(len(doc.inline_shapes), 1)
+        shape = doc.inline_shapes[0]
+        self.assertAlmostEqual(shape.width / 914400.0, 2.0, places=1)
+        self.assertAlmostEqual(shape.height / 914400.0, 1.5, places=1)
+
+    def test_add_picture_table_cell_and_cm(self):
+        img_path = Path(self.tmp_dir.name) / "test_table.png"
+        img_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
+
+        create_table_docx(self.file_path, [["Produk", "Foto"]])
+        res = add_picture_docx(
+            self.file_path,
+            str(img_path),
+            table_index=0,
+            row=0,
+            col=1,
+            width_cm=4.0,
+            alignment="center",
+        )
+        self.assertIn("tabel 0 sel [0, 1]", res)
+
+        doc = Document(self.file_path)
+        cell = doc.tables[0].rows[0].cells[1]
+        self.assertEqual(cell.paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+    def test_get_images_info_and_resize(self):
+        img_path = Path(self.tmp_dir.name) / "test_resize.png"
+        img_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
+
+        add_picture_docx(self.file_path, str(img_path), width_inches=1.0)
+        info = get_images_info_docx(self.file_path)
+        self.assertIn("Total gambar pada", info)
+        self.assertIn("[Gambar 0]", info)
+
+        resize_res = resize_picture_docx(self.file_path, picture_index=0, width_inches=3.0, height_inches=2.0)
+        self.assertIn("Berhasil mengubah ukuran gambar 0", resize_res)
+
+        doc = Document(self.file_path)
+        shape = doc.inline_shapes[0]
+        self.assertAlmostEqual(shape.width / 914400.0, 3.0, places=1)
+        self.assertAlmostEqual(shape.height / 914400.0, 2.0, places=1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
